@@ -3,6 +3,7 @@ import 'package:get/get.dart';
 import '../../../../controllers/video_download_manager.dart';
 import '../../../../data/models/video.dart';
 import '../../../theme/color_theme.dart';
+import '../../../global_widgets/snackbar.dart';
 
 class VideoListItem extends StatelessWidget {
   final Video video;
@@ -721,14 +722,15 @@ class VideoListItem extends StatelessWidget {
             onPressed: () {
               manager.deleteDownloadedVideo(video.id);
               Get.back();
-              Get.snackbar(
-                'تم الحذف',
-                'تم حذف الفيديو بنجاح',
-                snackPosition: SnackPosition.BOTTOM,
-                backgroundColor: Colors.green,
-                colorText: Colors.white,
-                duration: Duration(seconds: 2),
-              );
+              final context = Get.context;
+              if (context != null) {
+                ShamraSnackBar.show(
+                  context: context,
+                  message: 'تم الحذف: تم حذف الفيديو بنجاح',
+                  type: SnackBarType.success,
+                  duration: Duration(seconds: 2),
+                );
+              }
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.red,
@@ -768,14 +770,15 @@ class VideoListItem extends StatelessWidget {
             onPressed: () {
               manager.cancelDownload(video.id);
               Get.back();
-              Get.snackbar(
-                'تم الإلغاء',
-                'تم إلغاء تحميل الفيديو',
-                snackPosition: SnackPosition.BOTTOM,
-                backgroundColor: Colors.orange,
-                colorText: Colors.white,
-                duration: Duration(seconds: 2),
-              );
+              final context = Get.context;
+              if (context != null) {
+                ShamraSnackBar.show(
+                  context: context,
+                  message: 'تم الإلغاء: تم إلغاء تحميل الفيديو',
+                  type: SnackBarType.warning,
+                  duration: Duration(seconds: 2),
+                );
+              }
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.orange,

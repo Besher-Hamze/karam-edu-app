@@ -32,7 +32,7 @@ class AppTheme {
           fontWeight: FontWeight.bold,
         ),
       ),
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         elevation: 2,
         shadowColor: ColorTheme.primary.withOpacity(0.2),
@@ -149,7 +149,7 @@ class AppTheme {
         type: BottomNavigationBarType.fixed,
         elevation: 8,
       ),
-      tabBarTheme: TabBarTheme(
+      tabBarTheme: TabBarThemeData(
         labelColor: ColorTheme.primary,
         unselectedLabelColor: Colors.grey[600],
         indicatorColor: ColorTheme.primary,
@@ -184,7 +184,7 @@ class AppTheme {
           fontWeight: FontWeight.bold,
         ),
       ),
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         elevation: 2,
         color: ColorTheme.darkCardBackground,
@@ -297,7 +297,7 @@ class AppTheme {
         type: BottomNavigationBarType.fixed,
         elevation: 8,
       ),
-      tabBarTheme: TabBarTheme(
+      tabBarTheme: TabBarThemeData(
         labelColor: ColorTheme.primary,
         unselectedLabelColor: Colors.grey[500],
         indicatorColor: ColorTheme.primary,

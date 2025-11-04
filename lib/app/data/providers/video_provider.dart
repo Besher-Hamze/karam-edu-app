@@ -20,4 +20,12 @@ class VideoProvider {
       rethrow;
     }
   }
+
+  Future<p.Response> getVideoUrl(String videoId) async {
+    try {
+      return await _networkService.get('/videos/$videoId/url');
+    } catch (e) {
+      rethrow;
+    }
+  }
 }

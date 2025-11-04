@@ -232,22 +232,76 @@ class VideoPlayerScreen extends GetView<VideoController> {
                           ),
                         ),
 
-                        // Center play/pause button
+                        // Center controls: backward, play/pause, forward
                         Center(
-                          child: GestureDetector(
-                            onTap: controller.playPause,
-                            child: Container(
-                              padding: EdgeInsets.all(16),
-                              decoration: BoxDecoration(
-                                color: ColorTheme.primary.withOpacity(0.8),
-                                shape: BoxShape.circle,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              // Backward 10s button
+                              GestureDetector(
+                                onTap: controller.skipBackward,
+                                child: Container(
+                                  padding: EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withOpacity(0.6),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.replay_10,
+                                        color: Colors.white,
+                                        size: 32,
+                                      ),
+                                    ],
+                                  ),
+                                ),
                               ),
-                              child: Icon(
-                                controller.isPlaying.value ? Icons.pause : Icons.play_arrow,
-                                color: Colors.white,
-                                size: 36,
+                              
+                              SizedBox(width: 24),
+                              
+                              // Play/Pause button
+                              GestureDetector(
+                                onTap: controller.playPause,
+                                child: Container(
+                                  padding: EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                    color: ColorTheme.primary.withOpacity(0.8),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Icon(
+                                    controller.isPlaying.value ? Icons.pause : Icons.play_arrow,
+                                    color: Colors.white,
+                                    size: 36,
+                                  ),
+                                ),
                               ),
-                            ),
+                              
+                              SizedBox(width: 24),
+                              
+                              // Forward 10s button
+                              GestureDetector(
+                                onTap: controller.skipForward,
+                                child: Container(
+                                  padding: EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withOpacity(0.6),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.forward_10,
+                                        color: Colors.white,
+                                        size: 32,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
 

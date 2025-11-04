@@ -12,6 +12,7 @@ import '../ui/screens/home/home_screen.dart';
 import '../ui/screens/courses/course_detail_screen.dart';
 import '../ui/screens/video/video_player_screen.dart';
 import '../ui/screens/profile/profile_screen.dart';
+import '../ui/screens/qr/qr_scanner_screen.dart';
 
 
 class AppPages {
@@ -56,6 +57,10 @@ class AppPages {
       name: Routes.PDF_VIEWER,
       page: () => PdfViewerScreen(filePath: Get.arguments['filePath']),
     ),
+    GetPage(
+      name: Routes.QR_SCANNER,
+      page: () => QrScannerScreen(),
+    ),
 
   ];
 }
@@ -70,5 +75,6 @@ abstract class Routes {
   static const VIDEO_PLAYER = '/video-player';
   static const PROFILE = '/profile';
   static const PDF_VIEWER = '/pdf-viewer';
+  static const QR_SCANNER = '/qr-scanner';
 
 }

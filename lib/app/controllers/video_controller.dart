@@ -3,15 +3,13 @@ import 'dart:io';
 import 'package:course_platform/app/controllers/video_download_manager.dart';
 import 'package:course_platform/app/data/models/video.dart';
 import 'package:course_platform/app/data/repositories/video_repository.dart';
-import 'package:course_platform/app/services/network_service.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:video_player/video_player.dart';
-import 'package:wakelock/wakelock.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../services/storage_service.dart';
-import '../ui/theme/color_theme.dart';
+import '../ui/global_widgets/snackbar.dart';
 
 class VideoController extends GetxController {
   final VideoRepository _videoRepository;
@@ -54,7 +52,7 @@ class VideoController extends GetxController {
       if (message == 'AppLifecycleState.paused') {
         if (isPlaying.value) {
           playPause();
-          Wakelock.disable();
+          WakelockPlus.disable();
         }
       } else if (message == 'AppLifecycleState.resumed') {
         _setFullScreen(true);
@@ -107,6 +105,7 @@ class VideoController extends GetxController {
       isVideoInitialized.value = false;
       hasTriedOnlineFallback.value = false;
       _currentLocalFilePath = null; // إعادة تعيين مسار الملف المحلي
+      _videoMarkedAsWatched = false; // Reset watched flag for new video
 
       // إعادة تعيين سرعة التشغيل إلى الوضع الطبيعي عند تحميل فيديو جديد
       playbackSpeed.value = 1.0;
@@ -142,8 +141,13 @@ class VideoController extends GetxController {
           // حذف الفيديو المحلي التالف
           await _handleCorruptedLocalFile(videoId, localFilePath);
 
-          final streamUrl = Get.find<NetworkService>().getVideoStreamUrl(videoId);
-          await initializeVideoPlayer(streamUrl, isOffline: false);
+          // Get direct video URL from backend
+          final String? streamUrl = await _videoRepository.getVideoUrl(videoId);
+          if (streamUrl != null) {
+            await initializeVideoPlayer(streamUrl, isOffline: false);
+          } else {
+            throw Exception('فشل الحصول على رابط الفيديو من الخادم');
+          }
         } else if (!initSuccess && !hasInternet) {
           // إذا فشل التشغيل المحلي ولا يوجد اتصال بالإنترنت، حذف الملف التالف أيضًا
           await _handleCorruptedLocalFile(videoId, localFilePath);
@@ -151,9 +155,14 @@ class VideoController extends GetxController {
         }
       } else if (hasInternet) {
         // لا يوجد نسخة محلية صالحة ولكن يوجد اتصال بالإنترنت
-        final streamUrl = Get.find<NetworkService>().getVideoStreamUrl(videoId);
-        print("Using streaming URL: $streamUrl");
-        await initializeVideoPlayer(streamUrl, isOffline: false);
+        // Get direct video URL from backend
+        final String? streamUrl = await _videoRepository.getVideoUrl(videoId);
+        if (streamUrl != null) {
+          print("Using streaming URL: $streamUrl");
+          await initializeVideoPlayer(streamUrl, isOffline: false);
+        } else {
+          throw Exception('فشل الحصول على رابط الفيديو من الخادم');
+        }
 
         // إذا كان الفيديو في قائمة التنزيلات ولكن غير صالح، قم بإزالته
         if (isDownloaded && localFilePath != null && !isValidLocalFile) {
@@ -173,15 +182,20 @@ class VideoController extends GetxController {
       if (!hasTriedOnlineFallback.value && currentVideo.value != null && await _hasInternetConnection()) {
         hasTriedOnlineFallback.value = true;
         print("Trying online fallback as last resort");
-        final streamUrl = Get.find<NetworkService>().getVideoStreamUrl(currentVideo.value!.id);
-        await initializeVideoPlayer(streamUrl, isOffline: false);
+        final String? streamUrl = await _videoRepository.getVideoUrl(currentVideo.value!.id);
+        if (streamUrl != null) {
+          await initializeVideoPlayer(streamUrl, isOffline: false);
+        }
       } else {
-        Get.snackbar(
-          'خطأ',
-          'فشل تحميل الفيديو. تأكد من اتصالك بالإنترنت أو قم بتنزيل الفيديو للمشاهدة دون اتصال.',
-          snackPosition: SnackPosition.BOTTOM,
-          duration: Duration(seconds: 5),
-        );
+        final context = Get.context;
+        if (context != null) {
+          ShamraSnackBar.show(
+            context: context,
+            message: 'خطأ: فشل تحميل الفيديو. تأكد من اتصالك بالإنترنت أو قم بتنزيل الفيديو للمشاهدة دون اتصال.',
+            type: SnackBarType.error,
+            duration: Duration(seconds: 5),
+          );
+        }
       }
     } finally {
       isLoading.value = false;
@@ -204,14 +218,15 @@ class VideoController extends GetxController {
       print("Removed video from downloads list: $videoId");
 
       // عرض رسالة للمستخدم
-      Get.snackbar(
-        'ملف تالف',
-        'تم اكتشاف مشكلة في الفيديو المحمل وتم حذفه. يمكنك إعادة تحميله لاحقاً.',
-        snackPosition: SnackPosition.BOTTOM,
-        backgroundColor: Colors.red.withOpacity(0.7),
-        colorText: Colors.white,
-        duration: Duration(seconds: 3),
-      );
+      final context = Get.context;
+      if (context != null) {
+        ShamraSnackBar.show(
+          context: context,
+          message: 'ملف تالف: تم اكتشاف مشكلة في الفيديو المحمل وتم حذفه. يمكنك إعادة تحميله لاحقاً.',
+          type: SnackBarType.warning,
+          duration: Duration(seconds: 3),
+        );
+      }
     } catch (e) {
       print("Error handling corrupted file: $e");
     }
@@ -227,11 +242,6 @@ class VideoController extends GetxController {
     }
   }
 
-  // Optionally track offline views for analytics
-  void _trackOfflineView(String videoId) {
-    print("OFFFLINE");
-  }
-
   Future<bool> initializeVideoPlayer(String videoPath, {bool isOffline = false}) async {
     // Dispose previous controller if exists
     if (videoPlayerController.value != null) {
@@ -244,13 +254,8 @@ class VideoController extends GetxController {
         videoPlayerController.value = VideoPlayerController.file(File(videoPath));
         isOfflineMode.value = true;
       } else {
-        final token = _storageService.getToken();
-        videoPlayerController.value = VideoPlayerController.network(
-            videoPath,
-            httpHeaders: {
-              'Authorization': 'Bearer $token',
-            }
-        );
+        // For online mode, use the direct URL (no need to add auth header as it's a signed URL)
+        videoPlayerController.value = VideoPlayerController.network(videoPath);
         isOfflineMode.value = false;
       }
 
@@ -269,7 +274,7 @@ class VideoController extends GetxController {
       await videoPlayerController.value!.setPlaybackSpeed(playbackSpeed.value);
 
       // Enable wakelock to keep screen on
-      Wakelock.enable();
+      WakelockPlus.enable();
 
       return true; // تهيئة ناجحة
     } catch (e) {
@@ -285,16 +290,22 @@ class VideoController extends GetxController {
         if (await _hasInternetConnection() && !hasTriedOnlineFallback.value) {
           hasTriedOnlineFallback.value = true;
           print("Local playback failed, trying online playback");
-          final streamUrl = Get.find<NetworkService>().getVideoStreamUrl(currentVideo.value!.id);
-          return await initializeVideoPlayer(streamUrl, isOffline: false);
+          final String? streamUrl = await _videoRepository.getVideoUrl(currentVideo.value!.id);
+          if (streamUrl != null) {
+            return await initializeVideoPlayer(streamUrl, isOffline: false);
+          }
+          return false;
         }
       }
 
-      Get.snackbar(
-        'خطأ',
-        'فشل تشغيل الفيديو',
-        snackPosition: SnackPosition.BOTTOM,
-      );
+      final context = Get.context;
+      if (context != null) {
+        ShamraSnackBar.show(
+          context: context,
+          message: 'خطأ: فشل تشغيل الفيديو',
+          type: SnackBarType.error,
+        );
+      }
       return false; // تهيئة فاشلة
     }
   }
@@ -306,6 +317,9 @@ class VideoController extends GetxController {
   void setZoomHintShown() {
     hasShownZoomHint.value = true;
   }
+
+  // Variable to track if video was already marked as watched
+  bool _videoMarkedAsWatched = false;
 
   // Video player listener
   void _videoPlayerListener() {
@@ -329,14 +343,32 @@ class VideoController extends GetxController {
         _handlePlaybackError();
       }
 
+      // Check if video ended (mark as watched if at least 95% completed)
+      if (duration.inMilliseconds > 0 && !_videoMarkedAsWatched) {
+        final progress = position.inMilliseconds / duration.inMilliseconds;
+        // Mark as watched if video is at least 95% complete or reached the end
+        if (progress >= 0.95 || position.inMilliseconds >= duration.inMilliseconds - 1000) {
+          _markVideoAsWatched();
+        }
+      }
+
       // Check if video ended
       if (position.inMilliseconds >= duration.inMilliseconds && !isBuffering.value) {
         // Show controls when video ends
         controlsVisible.value = true;
 
         // Disable wakelock when video ends
-        Wakelock.disable();
+        WakelockPlus.disable();
       }
+    }
+  }
+
+  // Mark video as watched in storage
+  Future<void> _markVideoAsWatched() async {
+    if (currentVideo.value != null && !_videoMarkedAsWatched) {
+      _videoMarkedAsWatched = true;
+      await _storageService.addVideoToWatchedList(currentVideo.value!.id);
+      print('✅ Video marked as watched: ${currentVideo.value!.id}');
     }
   }
 
@@ -351,16 +383,20 @@ class VideoController extends GetxController {
         await _handleCorruptedLocalFile(currentVideo.value!.id, _currentLocalFilePath!);
       }
 
-      Get.snackbar(
-          'جاري التبديل للمشاهدة عبر الإنترنت',
-          'حدث خطأ في تشغيل الفيديو المحلي',
-          snackPosition: SnackPosition.BOTTOM,
+      final context = Get.context;
+      if (context != null) {
+        ShamraSnackBar.show(
+          context: context,
+          message: 'جاري التبديل للمشاهدة عبر الإنترنت: حدث خطأ في تشغيل الفيديو المحلي',
+          type: SnackBarType.info,
           duration: Duration(seconds: 2),
-          colorText: Colors.white
-      );
+        );
+      }
 
-      final streamUrl = Get.find<NetworkService>().getVideoStreamUrl(currentVideo.value!.id);
-      await initializeVideoPlayer(streamUrl, isOffline: false);
+      final String? streamUrl = await _videoRepository.getVideoUrl(currentVideo.value!.id);
+      if (streamUrl != null) {
+        await initializeVideoPlayer(streamUrl, isOffline: false);
+      }
     } else if (isOfflineMode.value && currentVideo.value != null && _currentLocalFilePath != null) {
       // إذا لم يكن هناك اتصال بالإنترنت، احذف الملف التالف فقط
       await _handleCorruptedLocalFile(currentVideo.value!.id, _currentLocalFilePath!);
@@ -373,11 +409,11 @@ class VideoController extends GetxController {
       if (isPlaying.value) {
         videoPlayerController.value!.pause();
         // Disable wakelock when paused
-        Wakelock.disable();
+        WakelockPlus.disable();
       } else {
         videoPlayerController.value!.play();
         // Enable wakelock when playing
-        Wakelock.enable();
+        WakelockPlus.enable();
         _startHideControlsTimer();
       }
     }
@@ -391,17 +427,15 @@ class VideoController extends GetxController {
         playbackSpeed.value = speed;
 
         // إظهار رسالة تأكيد للمستخدم
-        Get.snackbar(
-          'تم تغيير السرعة',
-          'سرعة التشغيل: ${speed == 1.0 ? "طبيعية" : "x" + speed.toStringAsFixed(1)}',
-          snackPosition: SnackPosition.BOTTOM,
-          backgroundColor: ColorTheme.primary.withOpacity(0.7),
-          colorText: Colors.white,
-          duration: Duration(seconds: 1),
-          padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-          margin: EdgeInsets.only(bottom: 20, left: 50, right: 50),
-          borderRadius: 10,
-        );
+        final context = Get.context;
+        if (context != null) {
+          ShamraSnackBar.show(
+            context: context,
+            message: 'تم تغيير السرعة: سرعة التشغيل: ${speed == 1.0 ? "طبيعية" : "x" + speed.toStringAsFixed(1)}',
+            type: SnackBarType.info,
+            duration: Duration(seconds: 1),
+          );
+        }
 
         // إبقاء عناصر التحكم ظاهرة لبعض الوقت
         _startHideControlsTimer();
@@ -425,6 +459,37 @@ class VideoController extends GetxController {
       final Duration duration = videoPlayerController.value!.value.duration;
       final int milliseconds = (progress * duration.inMilliseconds).round();
       seekTo(Duration(milliseconds: milliseconds));
+    }
+  }
+
+  // Skip forward 10 seconds
+  void skipForward() {
+    if (videoPlayerController.value != null) {
+      final Duration currentPosition = videoPlayerController.value!.value.position;
+      final Duration duration = videoPlayerController.value!.value.duration;
+      final Duration newPosition = currentPosition + Duration(seconds: 10);
+      
+      // Don't skip past the end
+      if (newPosition < duration) {
+        seekTo(newPosition);
+      } else {
+        seekTo(duration);
+      }
+    }
+  }
+
+  // Skip backward 10 seconds
+  void skipBackward() {
+    if (videoPlayerController.value != null) {
+      final Duration currentPosition = videoPlayerController.value!.value.position;
+      final Duration newPosition = currentPosition - Duration(seconds: 10);
+      
+      // Don't skip before the beginning
+      if (newPosition > Duration.zero) {
+        seekTo(newPosition);
+      } else {
+        seekTo(Duration.zero);
+      }
     }
   }
 
@@ -467,7 +532,7 @@ class VideoController extends GetxController {
     ]);
 
     // Disable wakelock when leaving the video screen
-    Wakelock.disable();
+    WakelockPlus.disable();
 
     super.onClose();
   }

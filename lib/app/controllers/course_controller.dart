@@ -1,9 +1,8 @@
 import 'dart:io';
 import 'package:get/get.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:dio/dio.dart';
-import 'package:open_file/open_file.dart';
+import 'package:open_filex/open_filex.dart';
 import '../data/repositories/course_repository.dart';
 import '../data/repositories/video_repository.dart';
 import '../data/repositories/file_repository.dart';
@@ -12,6 +11,7 @@ import '../data/models/video.dart';
 import '../data/models/file.dart';
 import '../services/storage_service.dart';
 import '../routes/app_pages.dart';
+import '../ui/global_widgets/snackbar.dart';
 
 class CourseController extends GetxController {
   final CourseRepository _courseRepository;
@@ -28,6 +28,9 @@ class CourseController extends GetxController {
         _videoRepository = videoRepository,
         _fileRepository = fileRepository;
 
+  // Public getter for file repository (needed for UI access)
+  FileRepository get fileRepository => _fileRepository;
+
   final Rx<Course?> courseDetails = Rx<Course?>(null);
   final RxList<Video> courseVideos = <Video>[].obs;
   final RxList<CourseFile> courseFiles = <CourseFile>[].obs;
@@ -40,10 +43,14 @@ class CourseController extends GetxController {
   final RxMap<String, double> downloadProgress = <String, double>{}.obs;
   final RxMap<String, bool> downloadedFiles = <String, bool>{}.obs;
 
+  // Watched videos tracking
+  final RxMap<String, bool> watchedVideos = <String, bool>{}.obs;
+
   @override
   void onInit() {
     super.onInit();
     _loadDownloadedFilesList();
+    _loadWatchedVideosList();
 
     final String? courseId = Get.parameters['courseId'];
     if (courseId != null) {
@@ -67,16 +74,37 @@ class CourseController extends GetxController {
     }
   }
 
+  // Initialize watched videos list from storage
+  Future<void> _loadWatchedVideosList() async {
+    final watchedList = await _storageService.getWatchedVideosList();
+    for (String videoId in watchedList) {
+      watchedVideos[videoId] = true;
+    }
+  }
+
+  // Check if a video is watched
+  bool isVideoWatched(String videoId) {
+    return watchedVideos[videoId] ?? false;
+  }
+
+  // Public method to reload watched videos (for use in UI)
+  Future<void> reloadWatchedVideos() async {
+    await _loadWatchedVideosList();
+  }
+
   Future<void> fetchCourseDetails(String courseId) async {
     try {
       isLoadingDetails.value = true;
       courseDetails.value = await _courseRepository.getCourseDetails(courseId);
     } catch (e) {
-      Get.snackbar(
-        'خطأ',
-        'حدث خطأ أثناء تحميل تفاصيل الكورس',
-        snackPosition: SnackPosition.BOTTOM,
-      );
+      final context = Get.context;
+      if (context != null) {
+        ShamraSnackBar.show(
+          context: context,
+          message: 'خطأ: حدث خطأ أثناء تحميل تفاصيل الكورس',
+          type: SnackBarType.error,
+        );
+      }
     } finally {
       isLoadingDetails.value = false;
     }
@@ -86,12 +114,17 @@ class CourseController extends GetxController {
     try {
       isLoadingVideos.value = true;
       courseVideos.value = await _videoRepository.getVideosByCourse(courseId);
+      // Reload watched status for the new videos
+      await _loadWatchedVideosList();
     } catch (e) {
-      Get.snackbar(
-        'خطأ',
-        'حدث خطأ أثناء تحميل الفيديوهات',
-        snackPosition: SnackPosition.BOTTOM,
-      );
+      final context = Get.context;
+      if (context != null) {
+        ShamraSnackBar.show(
+          context: context,
+          message: 'خطأ: حدث خطأ أثناء تحميل الفيديوهات',
+          type: SnackBarType.error,
+        );
+      }
     } finally {
       isLoadingVideos.value = false;
     }
@@ -102,11 +135,14 @@ class CourseController extends GetxController {
       isLoadingFiles.value = true;
       courseFiles.value = await _fileRepository.getFilesByCourse(courseId);
     } catch (e) {
-      Get.snackbar(
-        'خطأ',
-        'حدث خطأ أثناء تحميل الملفات',
-        snackPosition: SnackPosition.BOTTOM,
-      );
+      final context = Get.context;
+      if (context != null) {
+        ShamraSnackBar.show(
+          context: context,
+          message: 'خطأ: حدث خطأ أثناء تحميل الملفات',
+          type: SnackBarType.error,
+        );
+      }
     } finally {
       isLoadingFiles.value = false;
     }
@@ -132,11 +168,14 @@ class CourseController extends GetxController {
 
       // Check storage permission
       if (!await _requestStoragePermission()) {
-        Get.snackbar(
-          'خطأ',
-          'تحتاج إلى منح إذن الوصول إلى التخزين',
-          snackPosition: SnackPosition.BOTTOM,
-        );
+        final context = Get.context;
+        if (context != null) {
+          ShamraSnackBar.show(
+            context: context,
+            message: 'خطأ: تحتاج إلى منح إذن الوصول إلى التخزين',
+            type: SnackBarType.error,
+          );
+        }
         return;
       }
 
@@ -166,11 +205,14 @@ class CourseController extends GetxController {
       await openFile(filePath, file.fileType);
 
     } catch (e) {
-      Get.snackbar(
-        'خطأ',
-        'حدث خطأ أثناء تنزيل الملف',
-        snackPosition: SnackPosition.BOTTOM,
-      );
+      final context = Get.context;
+      if (context != null) {
+        ShamraSnackBar.show(
+          context: context,
+          message: 'خطأ: حدث خطأ أثناء تنزيل الملف',
+          type: SnackBarType.error,
+        );
+      }
     } finally {
       downloadingFiles.remove(file.id);
       downloadProgress.remove(file.id);
@@ -185,21 +227,27 @@ class CourseController extends GetxController {
         Get.toNamed(Routes.PDF_VIEWER, arguments: {'filePath': filePath});
       } else {
         // Open other file types with system handler
-        final result = await OpenFile.open(filePath);
+        final result = await OpenFilex.open(filePath);
         if (result.type != ResultType.done) {
-          Get.snackbar(
-            'خطأ',
-            'لا يمكن فتح الملف. ${result.message}',
-            snackPosition: SnackPosition.BOTTOM,
-          );
+          final context = Get.context;
+          if (context != null) {
+            ShamraSnackBar.show(
+              context: context,
+              message: 'خطأ: لا يمكن فتح الملف. ${result.message}',
+              type: SnackBarType.error,
+            );
+          }
         }
       }
     } catch (e) {
-      Get.snackbar(
-        'خطأ',
-        'حدث خطأ أثناء فتح الملف',
-        snackPosition: SnackPosition.BOTTOM,
-      );
+      final context = Get.context;
+      if (context != null) {
+        ShamraSnackBar.show(
+          context: context,
+          message: 'خطأ: حدث خطأ أثناء فتح الملف',
+          type: SnackBarType.error,
+        );
+      }
     }
   }
 
@@ -225,11 +273,30 @@ class CourseController extends GetxController {
 
   // Request storage permission
   Future<bool> _requestStoragePermission() async {
-    if (await Permission.storage.isGranted) {
+    if (!Platform.isAndroid) {
+      return true; // iOS always returns true
+    }
+    
+    try {
+      // For Android 13+ (API 33+), we use app's private storage which doesn't need permissions
+      // Just verify we can write to private storage
+      final directory = await getApplicationDocumentsDirectory();
+      final testFile = File('${directory.path}/.permission_test');
+      await testFile.writeAsString('test');
+      await testFile.delete();
       return true;
-    } else {
-      final result = await Permission.storage.request();
-      return result.isGranted;
+    } catch (e) {
+      print('Error checking storage access: $e');
+      
+      final context = Get.context;
+      if (context != null) {
+        ShamraSnackBar.show(
+          context: context,
+          message: 'خطأ: تعذر الوصول إلى التخزين',
+          type: SnackBarType.error,
+        );
+      }
+      return false;
     }
   }
 }

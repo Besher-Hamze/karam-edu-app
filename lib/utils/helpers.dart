@@ -1,6 +1,6 @@
-import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:get/get.dart';
+import '../app/ui/global_widgets/snackbar.dart';
 
 class Helpers {
   // تنسيق التاريخ
@@ -44,36 +44,26 @@ class Helpers {
 
   // إظهار رسالة نجاح
   static void showSuccessSnackbar(String title, String message) {
-    Get.snackbar(
-      title,
-      message,
-      snackPosition: SnackPosition.BOTTOM,
-      backgroundColor: Colors.green[100],
-      colorText: Colors.green[800],
-      margin: EdgeInsets.all(8),
-      borderRadius: 10,
-      icon: Icon(
-        Icons.check_circle,
-        color: Colors.green[800],
-      ),
-    );
+    final context = Get.context;
+    if (context != null) {
+      ShamraSnackBar.show(
+        context: context,
+        message: '$title: $message',
+        type: SnackBarType.success,
+      );
+    }
   }
 
   // إظهار رسالة خطأ
   static void showErrorSnackbar(String title, String message) {
-    Get.snackbar(
-      title,
-      message,
-      snackPosition: SnackPosition.BOTTOM,
-      backgroundColor: Colors.red[100],
-      colorText: Colors.red[800],
-      margin: EdgeInsets.all(8),
-      borderRadius: 10,
-      icon: Icon(
-        Icons.error,
-        color: Colors.red[800],
-      ),
-    );
+    final context = Get.context;
+    if (context != null) {
+      ShamraSnackBar.show(
+        context: context,
+        message: '$title: $message',
+        type: SnackBarType.error,
+      );
+    }
   }
 }
 

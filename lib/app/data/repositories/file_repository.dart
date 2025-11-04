@@ -23,4 +23,26 @@ class FileRepository {
       rethrow;
     }
   }
+
+  // Get file URL from backend (signed URL)
+  Future<String?> getFileUrl(String fileId) async {
+    try {
+      final response = await _fileProvider.getFileUrl(fileId);
+      
+      // Extract URL from response
+      if (response.data != null) {
+        // Check different possible response formats
+        if (response.data is Map) {
+          return response.data['url'] ?? response.data['fileUrl'] ?? response.data['downloadUrl'];
+        } else if (response.data is String) {
+          return response.data;
+        }
+      }
+      
+      return null;
+    } catch (e) {
+      print('Error getting file URL: $e');
+      return null;
+    }
+  }
 }

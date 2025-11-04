@@ -24,7 +24,7 @@ if (flutterVersionName == null) {
 
 android {
     namespace "com.AnyCode.course_platform"
-    compileSdkVersion 34
+    compileSdkVersion 36
     ndkVersion flutter.ndkVersion
 
     compileOptions {
@@ -43,8 +43,8 @@ android {
     defaultConfig {
         applicationId "com.AnyCode.course_platform"
         // Updated to support modern permission model
-        minSdkVersion 21
-        targetSdkVersion 34  // Match compileSdkVersion for best compatibility
+        minSdkVersion flutter.minSdkVersion
+        targetSdkVersion 36  // Match compileSdkVersion for best compatibility
         multiDexEnabled true
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName

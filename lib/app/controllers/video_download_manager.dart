@@ -9,6 +9,7 @@ import '../data/models/video.dart';
 import '../data/repositories/video_repository.dart';
 import '../services/network_service.dart';
 import '../services/storage_service.dart';
+import '../ui/global_widgets/snackbar.dart';
 
 class VideoDownloadManager extends GetxController {
   final NetworkService _downloadService = Get.find<NetworkService>();
@@ -190,11 +191,14 @@ class VideoDownloadManager extends GetxController {
       }
     } catch (e) {
       print('Error checking existing downloads: $e');
-      Get.snackbar(
-        'خطأ',
-        'فشل التحقق من حالة التنزيلات',
-        snackPosition: SnackPosition.BOTTOM,
-      );
+      final context = Get.context;
+      if (context != null) {
+        ShamraSnackBar.show(
+          context: context,
+          message: 'خطأ: فشل التحقق من حالة التنزيلات',
+          type: SnackBarType.error,
+        );
+      }
     }
   }
 
@@ -225,8 +229,21 @@ class VideoDownloadManager extends GetxController {
       }
     }
 
-    final String videoUrl =
-        '${Get.find<NetworkService>().baseUrl}/${video.filePath}';
+    // Get signed URL from backend
+    final String? videoUrl = await _videoRepository.getVideoUrl(video.id);
+    
+    if (videoUrl == null) {
+      print('❌ Failed to get video URL from backend');
+      final context = Get.context;
+      if (context != null) {
+        ShamraSnackBar.show(
+          context: context,
+          message: 'خطأ: فشل الحصول على رابط الفيديو',
+          type: SnackBarType.error,
+        );
+      }
+      return false;
+    }
 
     try {
       final cancelToken = CancelToken();
@@ -612,11 +629,14 @@ class VideoDownloadManager extends GetxController {
       await downloadVideos(videos);
     } catch (e) {
       print('Error downloading course videos: $e');
-      Get.snackbar(
-        'خطأ',
-        'فشل تنزيل جميع مقاطع الفيديو',
-        snackPosition: SnackPosition.BOTTOM,
-      );
+      final context = Get.context;
+      if (context != null) {
+        ShamraSnackBar.show(
+          context: context,
+          message: 'خطأ: فشل تنزيل جميع مقاطع الفيديو',
+          type: SnackBarType.error,
+        );
+      }
     }
   }
 }

@@ -23,32 +23,36 @@ class FileListItem extends StatelessWidget {
     final textTheme = theme.textTheme;
     final courseController = Get.find<CourseController>();
 
-    return Container(
-      margin: EdgeInsets.only(bottom: 16),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 8,
-            offset: Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
+    return Obx(() {
+      // Reactively check if file is downloaded
+      final isFileDownloaded = courseController.downloadedFiles[file.id] ?? isDownloaded;
+      
+      return Container(
+        margin: EdgeInsets.only(bottom: 16),
+        decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
-          child: Ink(
-            decoration: BoxDecoration(
-              color: theme.cardColor,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: isDownloaded ? Colors.grey[300]! : Colors.grey[200]!,
-                width: 1,
-              ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 8,
+              offset: Offset(0, 2),
             ),
+          ],
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(12),
+            child: Ink(
+              decoration: BoxDecoration(
+                color: theme.cardColor,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: isFileDownloaded ? Colors.grey[300]! : Colors.grey[200]!,
+                  width: 1,
+                ),
+              ),
             child: Padding(
               padding: EdgeInsets.all(12),
               child: Row(
@@ -141,56 +145,59 @@ class FileListItem extends StatelessWidget {
                   ),
 
                   // Download button or Progress indicator
-                  Obx(() {
-                    final isDownloading = courseController.downloadingFiles[file.id] ?? false;
-                    final progress = courseController.downloadProgress[file.id] ?? 0.0;
+                  Builder(
+                    builder: (context) {
+                      final isDownloading = courseController.downloadingFiles[file.id] ?? false;
+                      final progress = courseController.downloadProgress[file.id] ?? 0.0;
 
-                    if (isDownloading) {
-                      return SizedBox(
-                        width: 40,
-                        height: 40,
-                        child: Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            CircularProgressIndicator(
-                              value: progress,
-                              strokeWidth: 3,
-                              backgroundColor: Colors.grey[300],
-                              valueColor: AlwaysStoppedAnimation<Color>(ColorTheme.primary),
-                            ),
-                            Text(
-                              '${(progress * 100).toInt()}%',
-                              style: TextStyle(
-                                fontSize: 9,
-                                fontWeight: FontWeight.bold,
-                                color: ColorTheme.primary,
+                      if (isDownloading) {
+                        return SizedBox(
+                          width: 40,
+                          height: 40,
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              CircularProgressIndicator(
+                                value: progress,
+                                strokeWidth: 3,
+                                backgroundColor: Colors.grey[300],
+                                valueColor: AlwaysStoppedAnimation<Color>(ColorTheme.primary),
                               ),
-                            ),
-                          ],
-                        ),
-                      );
-                    } else {
-                      return Container(
-                        decoration: BoxDecoration(
-                          color: isDownloaded ? Colors.grey[100] : ColorTheme.primary.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        padding: EdgeInsets.all(8),
-                        child: Icon(
-                          isDownloaded ? Icons.check_circle_outline : Icons.download_outlined,
-                          color: isDownloaded ? Colors.green[700] : ColorTheme.primary,
-                          size: 24,
-                        ),
-                      );
-                    }
-                  }),
-                ],
+                              Text(
+                                '${(progress * 100).toInt()}%',
+                                style: TextStyle(
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.bold,
+                                  color: ColorTheme.primary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      } else {
+                        return Container(
+                          decoration: BoxDecoration(
+                            color: isFileDownloaded ? Colors.grey[100] : ColorTheme.primary.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          padding: EdgeInsets.all(8),
+                          child: Icon(
+                            isFileDownloaded ? Icons.check_circle_outline : Icons.download_outlined,
+                            color: isFileDownloaded ? Colors.green[700] : ColorTheme.primary,
+                            size: 24,
+                          ),
+                        );
+                      }
+                    },
+                  ),
+                  ],
+                ),
               ),
             ),
           ),
         ),
-      ),
-    );
+      );
+    });
   }
 
   Color _getFileColor() {

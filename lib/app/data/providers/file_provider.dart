@@ -20,4 +20,12 @@ class FileProvider {
       rethrow;
     }
   }
+
+  Future<p.Response> getFileUrl(String fileId) async {
+    try {
+      return await _networkService.get('/files/$fileId/url');
+    } catch (e) {
+      rethrow;
+    }
+  }
 }

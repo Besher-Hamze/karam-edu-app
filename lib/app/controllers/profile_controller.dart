@@ -3,6 +3,7 @@ import 'package:get/get.dart';
 import '../data/repositories/student_repository.dart';
 import '../data/models/student.dart';
 import '../services/storage_service.dart';
+import '../ui/global_widgets/snackbar.dart';
 
 class ProfileController extends GetxController {
   final StudentRepository _studentRepository;
@@ -53,18 +54,24 @@ class ProfileController extends GetxController {
         student.value = updatedStudent;
         await _storageService.setStudentProfile(updatedStudent.toJson());
 
-        Get.snackbar(
-          'تم بنجاح',
-          'تم تحديث المعلومات الشخصية بنجاح',
-          snackPosition: SnackPosition.BOTTOM,
-        );
+        final context = Get.context;
+        if (context != null) {
+          ShamraSnackBar.show(
+            context: context,
+            message: 'تم بنجاح: تم تحديث المعلومات الشخصية بنجاح',
+            type: SnackBarType.success,
+          );
+        }
       }
     } catch (e) {
-      Get.snackbar(
-        'خطأ',
-        'حدث خطأ أثناء تحديث البيانات',
-        snackPosition: SnackPosition.BOTTOM,
-      );
+      final context = Get.context;
+      if (context != null) {
+        ShamraSnackBar.show(
+          context: context,
+          message: 'خطأ: حدث خطأ أثناء تحديث البيانات',
+          type: SnackBarType.error,
+        );
+      }
     } finally {
       isUpdating.value = false;
     }
@@ -72,11 +79,14 @@ class ProfileController extends GetxController {
 
   Future<void> changePassword() async {
     if (newPasswordController.text != confirmPasswordController.text) {
-      Get.snackbar(
-        'خطأ',
-        'كلمات المرور الجديدة غير متطابقة',
-        snackPosition: SnackPosition.BOTTOM,
-      );
+      final context = Get.context;
+      if (context != null) {
+        ShamraSnackBar.show(
+          context: context,
+          message: 'خطأ: كلمات المرور الجديدة غير متطابقة',
+          type: SnackBarType.error,
+        );
+      }
       return;
     }
 
@@ -95,18 +105,24 @@ class ProfileController extends GetxController {
         newPasswordController.clear();
         confirmPasswordController.clear();
 
-        Get.snackbar(
-          'تم بنجاح',
-          'تم تغيير كلمة المرور بنجاح',
-          snackPosition: SnackPosition.BOTTOM,
-        );
+        final context = Get.context;
+        if (context != null) {
+          ShamraSnackBar.show(
+            context: context,
+            message: 'تم بنجاح: تم تغيير كلمة المرور بنجاح',
+            type: SnackBarType.success,
+          );
+        }
       }
     } catch (e) {
-      Get.snackbar(
-        'خطأ',
-        'حدث خطأ أثناء تغيير كلمة المرور، تأكد من صحة كلمة المرور الحالية',
-        snackPosition: SnackPosition.BOTTOM,
-      );
+      final context = Get.context;
+      if (context != null) {
+        ShamraSnackBar.show(
+          context: context,
+          message: 'خطأ: حدث خطأ أثناء تغيير كلمة المرور، تأكد من صحة كلمة المرور الحالية',
+          type: SnackBarType.error,
+        );
+      }
     } finally {
       isUpdating.value = false;
     }

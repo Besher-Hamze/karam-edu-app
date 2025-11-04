@@ -1,6 +1,6 @@
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_windowmanager/flutter_windowmanager.dart';
+import 'package:flutter_windowmanager_plus/flutter_windowmanager_plus.dart';
 import 'package:get/get.dart';
 import 'package:get_storage/get_storage.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -15,7 +15,7 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await GetStorage.init();
   await initServices();
-  await FlutterWindowManager.addFlags(FlutterWindowManager.FLAG_SECURE);
+  await FlutterWindowManagerPlus.addFlags(FlutterWindowManagerPlus.FLAG_SECURE);
   List<String> allowDevice = ["SP1A.210812.016"];
   String identifier = '';
   DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
@@ -65,7 +65,7 @@ void main() async {
     securityIssue = "خطأ في فحص الأمان";
   }
 
-  if (true) {
+  if (isSafeDevice) {
     runApp(MyApp());
   } else {
     runApp(CompromisedDeviceApp(securityIssue: securityIssue));
@@ -74,7 +74,7 @@ void main() async {
 
 Future<void> initServices() async {
   await Get.putAsync(() => StorageService().init());
-  // await Get.putAsync(() => NetworkService().init());
+  await Get.putAsync(() => NetworkService().init());
 }
 
 // Regular app

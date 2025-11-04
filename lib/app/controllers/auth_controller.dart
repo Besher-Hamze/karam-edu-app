@@ -3,6 +3,7 @@ import 'package:get/get.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import '../data/repositories/auth_repository.dart';
 import '../services/storage_service.dart';
+import '../ui/global_widgets/snackbar.dart';
 
 class AuthController extends GetxController {
   AuthRepository _authRepository;
@@ -74,11 +75,14 @@ class AuthController extends GetxController {
       await _storageService.setStudentProfile(result['student'].toJson());
       Get.offAllNamed('/home');
     } catch (e) {
-      Get.snackbar(
-        'خطأ في تسجيل الدخول',
-        'الرجاء التحقق من بيانات تسجيل الدخول',
-        snackPosition: SnackPosition.BOTTOM,
-      );
+      final context = Get.context;
+      if (context != null) {
+        ShamraSnackBar.show(
+          context: context,
+          message: 'خطأ في تسجيل الدخول: الرجاء التحقق من بيانات تسجيل الدخول',
+          type: SnackBarType.error,
+        );
+      }
     } finally {
       isLoading.value = false;
     }
@@ -88,11 +92,14 @@ class AuthController extends GetxController {
     if (!registerFormKey.currentState!.validate()) return;
 
     if (registerPasswordController.text != confirmPasswordController.text) {
-      Get.snackbar(
-        'خطأ في كلمة المرور',
-        'كلمة المرور وتأكيد كلمة المرور غير متطابقين',
-        snackPosition: SnackPosition.BOTTOM,
-      );
+      final context = Get.context;
+      if (context != null) {
+        ShamraSnackBar.show(
+          context: context,
+          message: 'خطأ في كلمة المرور: كلمة المرور وتأكيد كلمة المرور غير متطابقين',
+          type: SnackBarType.error,
+        );
+      }
       return;
     }
 
@@ -112,13 +119,14 @@ class AuthController extends GetxController {
       await _storageService.setToken(result['accessToken']);
       await _storageService.setStudentProfile(result['student'].toJson());
 
-      Get.snackbar(
-        'تم التسجيل بنجاح',
-        'تم إنشاء حسابك بنجاح',
-        snackPosition: SnackPosition.BOTTOM,
-        backgroundColor: Colors.green.withOpacity(0.1),
-        colorText: Colors.green,
-      );
+      final context = Get.context;
+      if (context != null) {
+        ShamraSnackBar.show(
+          context: context,
+          message: 'تم التسجيل بنجاح: تم إنشاء حسابك بنجاح',
+          type: SnackBarType.success,
+        );
+      }
 
       Get.offAllNamed('/home');
     } catch (e) {
@@ -129,11 +137,14 @@ class AuthController extends GetxController {
         errorMessage = 'الرقم الجامعي مسجل بالفعل';
       }
 
-      Get.snackbar(
-        'خطأ في التسجيل',
-        errorMessage,
-        snackPosition: SnackPosition.BOTTOM,
-      );
+      final context = Get.context;
+      if (context != null) {
+        ShamraSnackBar.show(
+          context: context,
+          message: 'خطأ في التسجيل: $errorMessage',
+          type: SnackBarType.error,
+        );
+      }
     } finally {
       isRegisterLoading.value = false;
     }

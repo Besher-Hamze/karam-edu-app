@@ -80,6 +80,28 @@ class VideoRepository {
     return await _storageService.getVideoPath(videoId);
   }
 
+  // Get video URL from backend
+  Future<String?> getVideoUrl(String videoId) async {
+    try {
+      final response = await _videoProvider.getVideoUrl(videoId);
+      
+      // Extract URL from response
+      if (response.data != null) {
+        // Check different possible response formats
+        if (response.data is Map) {
+          return response.data['url'] ?? response.data['videoUrl'] ?? response.data['streamUrl'];
+        } else if (response.data is String) {
+          return response.data;
+        }
+      }
+      
+      return null;
+    } catch (e) {
+      print('Error getting video URL: $e');
+      return null;
+    }
+  }
+
   // Helper method to check internet connectivity
   Future<bool> _hasInternetConnection() async {
     try {

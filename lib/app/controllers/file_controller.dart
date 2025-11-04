@@ -46,9 +46,10 @@ class FileController extends GetxController {
 
     try {
       isDownloading.value = true;
-      await _mediaService.downloadAndOpenFile(
-        currentFile.value!.filePath,
-        Helpers.getFileNameFromPath(currentFile.value!.filePath),
+      // Use new method that gets signed URL from backend
+      await _mediaService.downloadAndOpenFileById(
+        currentFile.value!.id,
+        '${currentFile.value!.title}.${currentFile.value!.fileType}',
       );
     } catch (e) {
       Helpers.showErrorSnackbar(
@@ -65,9 +66,10 @@ class FileController extends GetxController {
 
     try {
       isDownloading.value = true;
-      final String? savedPath = await _mediaService.downloadFile(
-        currentFile.value!.filePath,
-        Helpers.getFileNameFromPath(currentFile.value!.filePath),
+      // Use new method that gets signed URL from backend
+      final String? savedPath = await _mediaService.downloadFileById(
+        currentFile.value!.id,
+        '${currentFile.value!.title}.${currentFile.value!.fileType}',
       );
 
       if (savedPath != null) {

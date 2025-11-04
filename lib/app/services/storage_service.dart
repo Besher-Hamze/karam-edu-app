@@ -190,5 +190,24 @@ class StorageService extends GetxService {
     return path;
   }
 
+  // Watched videos tracking
+  Future<List<String>> getWatchedVideosList() async {
+    final List<dynamic>? list = await GetStorage().read('watched_videos_list');
+    return list?.cast<String>() ?? [];
+  }
+
+  Future<void> addVideoToWatchedList(String videoId) async {
+    final List<String> currentList = await getWatchedVideosList();
+    if (!currentList.contains(videoId)) {
+      currentList.add(videoId);
+      await GetStorage().write('watched_videos_list', currentList);
+      print('✅ Marked video as watched: $videoId');
+    }
+  }
+
+  Future<bool> isVideoWatched(String videoId) async {
+    final List<String> watchedList = await getWatchedVideosList();
+    return watchedList.contains(videoId);
+  }
 
 }

@@ -37,30 +37,33 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.2
-  get: ^4.6.5
+  get: ^4.7.2
 
-  dio: ^5.1.0
+  dio: ^5.9.0
   get_storage: ^2.1.1
 
-  video_player: ^2.6.1
-  chewie: ^1.4.0
-  flutter_cache_manager: ^3.3.0
-  path_provider: ^2.0.15
-  open_file: ^3.3.1
-  url_launcher: ^6.1.11
-
-  intl: ^0.18.0
-  lottie: ^2.3.2
-  fluttertoast: ^8.2.1
-  cached_network_image: ^3.2.3
+  video_player: ^2.10.0
+  chewie: ^1.13.0
+  flutter_cache_manager: ^3.4.1
+  path_provider: ^2.1.5
+  url_launcher: ^6.3.2
+  intl: ^0.20.2
+  lottie: ^3.3.2
+  cached_network_image: ^3.4.1
   shimmer: ^3.0.0
-  flutter_svg: ^2.0.5
-  permission_handler:
-  device_info_plus: ^4.1.3
-  flutter_pdfview: ^1.3.1
-  safe_device: ^1.2.1
-  flutter_windowmanager:
-  flutter_launcher_icons:
+  flutter_svg: ^2.2.1
+  permission_handler: ^12.0.1
+  device_info_plus: 12.2.0
+  flutter_pdfview: ^1.4.3
+  safe_device: ^1.3.8
+  flutter_launcher_icons: ^0.14.4
+  wakelock_plus: ^1.4.0
+  flutter_windowmanager_plus: ^1.0.1
+  open_filex: ^4.7.0
+  mobile_scanner: ^6.0.2
+
+dependency_overrides:
+  url_launcher_android: ^6.3.24
 
 dev_dependencies:
   flutter_test:

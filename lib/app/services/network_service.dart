@@ -1,3 +1,4 @@
+import 'package:course_platform/utils/constants.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:get/get.dart';
 import 'dart:io';
@@ -6,11 +7,12 @@ import 'package:path_provider/path_provider.dart';
 import 'storage_service.dart';
 import 'package:dio/dio.dart' as p;
 import 'dart:math';
+import '../ui/global_widgets/snackbar.dart';
 
 class NetworkService extends GetxService {
   late Dio _dio;
   final StorageService _storageService = Get.find<StorageService>();
-  final String baseUrl = 'http://62.171.153.198:3050';
+  final String baseUrl = AppConstants.baseUrl;
   final DeviceInfoPlugin _deviceInfo = DeviceInfoPlugin();
 
   // Private variables for device information
@@ -42,8 +44,14 @@ class NetworkService extends GetxService {
         if (e.response?.statusCode == 401) {
           _storageService.clearAllData();
           Get.offAllNamed('/login');
-          Get.snackbar('خطأ في المصادقة', 'الرجاء تسجيل الدخول مرة أخرى',
-              snackPosition: SnackPosition.BOTTOM);
+          final context = Get.context;
+          if (context != null) {
+            ShamraSnackBar.show(
+              context: context,
+              message: 'خطأ في المصادقة: الرجاء تسجيل الدخول مرة أخرى',
+              type: SnackBarType.error,
+            );
+          }
         }
         return handler.next(e);
       },
@@ -144,7 +152,14 @@ class NetworkService extends GetxService {
       errorMessage = 'تعذر الاتصال بالخادم، تحقق من اتصالك بالإنترنت';
     }
 
-    Get.snackbar('خطأ', errorMessage, snackPosition: SnackPosition.BOTTOM);
+    final context = Get.context;
+    if (context != null) {
+      ShamraSnackBar.show(
+        context: context,
+        message: 'خطأ: $errorMessage',
+        type: SnackBarType.error,
+      );
+    }
   }
 
   // Generate a secure random filename that doesn't look like a video
@@ -410,21 +425,33 @@ class NetworkService extends GetxService {
         }
       }
 
-      // Get auth token
-      final token = _storageService.getToken();
+      // Check if this is a signed URL (contains query parameters for authentication)
+      final isSignedUrl = videoUrl.contains('X-Amz-Algorithm') || 
+                          videoUrl.contains('Signature') ||
+                          videoUrl.contains('signature');
+
+      // Prepare headers
+      final Map<String, dynamic> downloadHeaders = {
+        'Connection': 'keep-alive',
+        'User-Agent': 'VideoDownloader/1.0',
+        'Accept': '*/*',
+        'Accept-Encoding': 'identity',
+      };
+
+      // Only add auth header if NOT using signed URL
+      if (!isSignedUrl) {
+        final token = _storageService.getToken();
+        if (token != null) {
+          downloadHeaders['Authorization'] = 'Bearer $token';
+        }
+      }
 
       // Create Dio instance for downloading
       final Dio downloadDio = Dio(BaseOptions(
         connectTimeout: const Duration(seconds: 30),
         receiveTimeout: const Duration(minutes: 15),
         sendTimeout: const Duration(seconds: 30),
-        headers: {
-          if (token != null) 'Authorization': 'Bearer $token',
-          'Connection': 'keep-alive',
-          'User-Agent': 'VideoDownloader/1.0',
-          'Accept': '*/*',
-          'Accept-Encoding': 'identity',
-        },
+        headers: downloadHeaders,
       ));
 
       // Add range header for resume if needed

@@ -20,99 +20,151 @@ class SemesterSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // List of majors
-    final List<String> majors = [
-      'حواسيب',
-      'اتصالات',
-      'ميكاترونيك',
-      'تحكم',
-      'قدرة',
-      'قيادة',
-      'الكترونية'
+    // List of majors with icons
+    final List<Map<String, dynamic>> majors = [
+      {'name': 'حواسيب', 'icon': Icons.computer_rounded},
+      {'name': 'اتصالات', 'icon': Icons.wifi_rounded},
+      {'name': 'ميكاترونيك', 'icon': Icons.precision_manufacturing_rounded},
+      {'name': 'تحكم', 'icon': Icons.settings_input_component_rounded},
+      {'name': 'قدرة', 'icon': Icons.flash_on_rounded},
+      {'name': 'قيادة', 'icon': Icons.account_tree_rounded},
+      {'name': 'الكترونية', 'icon': Icons.memory_rounded}
     ];
 
     return Padding(
-      padding: const EdgeInsets.all(20.0),
+      padding: const EdgeInsets.all(24.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header with icon
+          // Premium header
           Row(
             children: [
               Container(
-                padding: EdgeInsets.all(8),
+                padding: EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: Colors.blue.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(10),
+                  gradient: LinearGradient(
+                    colors: [
+                      Color(0xFF6366F1).withOpacity(0.15),
+                      Color(0xFF8B5CF6).withOpacity(0.10),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: Color(0xFF6366F1).withOpacity(0.2),
+                    width: 1,
+                  ),
                 ),
                 child: Icon(
-                  Icons.tune_outlined,
-                  color: Colors.blue,
-                  size: 20,
+                  Icons.tune_rounded,
+                  color: Color(0xFF6366F1),
+                  size: 22,
                 ),
               ),
-              SizedBox(width: 12),
+              SizedBox(width: 14),
               Text(
                 'اختر التخصص والمستوى',
                 style: TextStyle(
                   fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey[800],
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF1A1D2E),
+                  letterSpacing: 0.3,
                 ),
               ),
             ],
           ),
 
-          SizedBox(height: 20),
+          SizedBox(height: 24),
 
-          // Major Dropdown
+          // Premium Major Dropdown
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'التخصص',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.grey[700],
+              Padding(
+                padding: EdgeInsets.only(right: 4, bottom: 10),
+                child: Text(
+                  'التخصص',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF4A5568),
+                    letterSpacing: 0.2,
+                  ),
                 ),
               ),
-              SizedBox(height: 8),
               Container(
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.grey[300]!),
-                  color: Colors.grey[50],
+                  borderRadius: BorderRadius.circular(16),
+                  color: Color(0xFFF8F9FC),
+                  border: Border.all(
+                    color: Color(0xFFE2E8F0),
+                    width: 1.5,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.02),
+                      blurRadius: 8,
+                      offset: Offset(0, 2),
+                    ),
+                  ],
                 ),
                 child: DropdownButtonFormField<String>(
-                  hint: Text(
-                    "اختر القسم",
-                    style: TextStyle(color: Colors.grey[500]),
+                  hint: Row(
+                    children: [
+                      Icon(
+                        Icons.school_rounded,
+                        color: Color(0xFF94A3B8),
+                        size: 20,
+                      ),
+                      SizedBox(width: 12),
+                      Text(
+                        "اختر القسم",
+                        style: TextStyle(
+                          color: Color(0xFF94A3B8),
+                          fontSize: 15,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
                   ),
                   value: currentMajor == "" ? null : currentMajor,
                   decoration: InputDecoration(
-                    contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 18, vertical: 16),
                     border: InputBorder.none,
-                    prefixIcon: Icon(
-                      Icons.school_outlined,
-                      color: Colors.grey[500],
+                  ),
+                  dropdownColor: Colors.white,
+                  icon: Container(
+                    margin: EdgeInsets.only(left: 12),
+                    padding: EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: Color(0xFF6366F1).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(
+                      Icons.keyboard_arrow_down_rounded,
+                      color: Color(0xFF6366F1),
                       size: 20,
                     ),
                   ),
-                  dropdownColor: Colors.white,
-                  icon: Icon(
-                    Icons.keyboard_arrow_down_rounded,
-                    color: Colors.grey[600],
-                  ),
                   items: majors.map((major) {
                     return DropdownMenuItem<String>(
-                      value: major,
-                      child: Text(
-                        major,
-                        style: TextStyle(
-                          color: Colors.grey[800],
-                          fontWeight: FontWeight.w500,
-                        ),
+                      value: major['name'],
+                      child: Row(
+                        children: [
+                          Icon(
+                            major['icon'],
+                            color: Color(0xFF6366F1),
+                            size: 20,
+                          ),
+                          SizedBox(width: 12),
+                          Text(
+                            major['name'],
+                            style: TextStyle(
+                              color: Color(0xFF1A1D2E),
+                              fontWeight: FontWeight.w600,
+                              fontSize: 15,
+                            ),
+                          ),
+                        ],
                       ),
                     );
                   }).toList(),
@@ -126,55 +178,83 @@ class SemesterSelector extends StatelessWidget {
             ],
           ),
 
-          SizedBox(height: 20),
+          SizedBox(height: 24),
 
           Row(
             children: [
-              // Year Dropdown
+              // Premium Year Dropdown
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'السنة الدراسية',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey[700],
+                    Padding(
+                      padding: EdgeInsets.only(right: 4, bottom: 10),
+                      child: Text(
+                        'السنة الدراسية',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF4A5568),
+                          letterSpacing: 0.2,
+                        ),
                       ),
                     ),
-                    SizedBox(height: 8),
                     Container(
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey[300]!),
-                        color: Colors.grey[50],
+                        borderRadius: BorderRadius.circular(16),
+                        color: Color(0xFFF8F9FC),
+                        border: Border.all(
+                          color: Color(0xFFE2E8F0),
+                          width: 1.5,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.02),
+                            blurRadius: 8,
+                            offset: Offset(0, 2),
+                          ),
+                        ],
                       ),
                       child: DropdownButtonFormField<int>(
                         value: currentYear,
                         decoration: InputDecoration(
-                          contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 16),
                           border: InputBorder.none,
-                          prefixIcon: Icon(
-                            Icons.calendar_today_outlined,
-                            color: Colors.grey[500],
-                            size: 18,
-                          ),
                         ),
                         dropdownColor: Colors.white,
-                        icon: Icon(
-                          Icons.keyboard_arrow_down_rounded,
-                          color: Colors.grey[600],
+                        icon: Container(
+                          margin: EdgeInsets.only(left: 8),
+                          padding: EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: Color(0xFF3B82F6).withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(
+                            Icons.keyboard_arrow_down_rounded,
+                            color: Color(0xFF3B82F6),
+                            size: 18,
+                          ),
                         ),
                         items: [1, 2, 3, 4, 5].map((year) {
                           return DropdownMenuItem<int>(
                             value: year,
-                            child: Text(
-                              'السنة $year',
-                              style: TextStyle(
-                                color: Colors.grey[800],
-                                fontWeight: FontWeight.w500,
-                              ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.calendar_today_rounded,
+                                  color: Color(0xFF3B82F6),
+                                  size: 18,
+                                ),
+                                SizedBox(width: 10),
+                                Text(
+                                  'السنة $year',
+                                  style: TextStyle(
+                                    color: Color(0xFF1A1D2E),
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ],
                             ),
                           );
                         }).toList(),
@@ -191,51 +271,79 @@ class SemesterSelector extends StatelessWidget {
 
               SizedBox(width: 16),
 
-              // Semester Dropdown
+              // Premium Semester Dropdown
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'الفصل الدراسي',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey[700],
+                    Padding(
+                      padding: EdgeInsets.only(right: 4, bottom: 10),
+                      child: Text(
+                        'الفصل الدراسي',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF4A5568),
+                          letterSpacing: 0.2,
+                        ),
                       ),
                     ),
-                    SizedBox(height: 8),
                     Container(
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey[300]!),
-                        color: Colors.grey[50],
+                        borderRadius: BorderRadius.circular(16),
+                        color: Color(0xFFF8F9FC),
+                        border: Border.all(
+                          color: Color(0xFFE2E8F0),
+                          width: 1.5,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.02),
+                            blurRadius: 8,
+                            offset: Offset(0, 2),
+                          ),
+                        ],
                       ),
                       child: DropdownButtonFormField<int>(
                         value: currentSemester,
                         decoration: InputDecoration(
-                          contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 16),
                           border: InputBorder.none,
-                          prefixIcon: Icon(
-                            Icons.event_note_outlined,
-                            color: Colors.grey[500],
-                            size: 18,
-                          ),
                         ),
                         dropdownColor: Colors.white,
-                        icon: Icon(
-                          Icons.keyboard_arrow_down_rounded,
-                          color: Colors.grey[600],
+                        icon: Container(
+                          margin: EdgeInsets.only(left: 8),
+                          padding: EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: Color(0xFF10B981).withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(
+                            Icons.keyboard_arrow_down_rounded,
+                            color: Color(0xFF10B981),
+                            size: 18,
+                          ),
                         ),
                         items: [1, 2].map((semester) {
                           return DropdownMenuItem<int>(
                             value: semester,
-                            child: Text(
-                              'الفصل $semester',
-                              style: TextStyle(
-                                color: Colors.grey[800],
-                                fontWeight: FontWeight.w500,
-                              ),
+                            child: Row(               
+                              children: [
+                                Icon(
+                                  Icons.event_note_rounded,
+                                  color: Color(0xFF10B981),
+                                  size: 18,
+                                ),
+                                SizedBox(width: 7),
+                                Text(
+                                  'الفصل $semester',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: Color(0xFF1A1D2E),
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
                             ),
                           );
                         }).toList(),
