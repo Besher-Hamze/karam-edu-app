@@ -1,6 +1,6 @@
 class AppConstants {
   // الروابط الخاصة بالAPI
-  static const String baseUrl = 'http://192.168.0.6:3050'; // للمحاكي، قم بتغييره للجهاز الفعلي
+  static const String baseUrl = 'http://62.171.153.198:3050/'; // للمحاكي، قم بتغييره للجهاز الفعلي
 
   // مفاتيح التخزين
   static const String tokenKey = 'token';
