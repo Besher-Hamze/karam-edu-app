@@ -16,7 +16,7 @@ void main() async {
   await GetStorage.init();
   await initServices();
   await FlutterWindowManager.addFlags(FlutterWindowManager.FLAG_SECURE);
-  List<String> allowDevice = ["SP1A.210812.016"];
+  List<String> allowDevice = ["SP1A.210812.016", "RP1A.200720.012"];
   String identifier = '';
   DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
   if (GetPlatform.isAndroid) {
@@ -25,7 +25,7 @@ void main() async {
   }
   // Use the comprehensive isSafeDevice check
   bool isSafeDevice = true;
-  bool skipChecking= false;
+  bool skipChecking = false;
   String securityIssue = "";
   try {
     // First try the comprehensive check
@@ -34,7 +34,7 @@ void main() async {
     if (allowDevice.contains(identifier)) {
       print("-----------------------------");
       isSafeDevice = true;
-      skipChecking=true;
+      skipChecking = true;
     }
     // If comprehensive check passes, do individual checks for more specific error messages
     if (isSafeDevice) {
@@ -65,7 +65,7 @@ void main() async {
     securityIssue = "خطأ في فحص الأمان";
   }
 
-  if (true) {
+  if (isSafeDevice || skipChecking) {
     runApp(MyApp());
   } else {
     runApp(CompromisedDeviceApp(securityIssue: securityIssue));
@@ -74,7 +74,7 @@ void main() async {
 
 Future<void> initServices() async {
   await Get.putAsync(() => StorageService().init());
-  // await Get.putAsync(() => NetworkService().init());
+  await Get.putAsync(() => NetworkService().init());
 }
 
 // Regular app

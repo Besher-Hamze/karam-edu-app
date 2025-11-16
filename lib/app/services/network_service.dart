@@ -13,6 +13,9 @@ class NetworkService extends GetxService {
   final String baseUrl = 'http://62.171.153.198:3050';
   final DeviceInfoPlugin _deviceInfo = DeviceInfoPlugin();
 
+  // Getter for dio instance
+  Dio get dio => _dio;
+
   // Private variables for device information
   String? _deviceManufacturer;
   String? _deviceModel;

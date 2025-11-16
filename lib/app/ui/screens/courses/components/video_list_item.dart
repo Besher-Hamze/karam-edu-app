@@ -25,6 +25,9 @@ class VideoListItem extends StatelessWidget {
     final theme = Theme.of(context);
     final textTheme = theme.textTheme;
     final downloadManager = Get.find<VideoDownloadManager>();
+    
+    // Ensure repository is initialized
+    downloadManager.ensureRepositoryInitialized();
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
@@ -221,8 +224,9 @@ class VideoListItem extends StatelessWidget {
   Widget _buildDownloadSection(VideoDownloadManager downloadManager) {
     return Obx(() {
       try {
-        final status = downloadManager.getDownloadStatusString(video.id);
-        final progress = downloadManager.downloadProgress[video.id] ?? 0.0;
+        final task = downloadManager.downloadTasks[video.id];
+        final status = task?.status ?? DownloadStatus.notStarted;
+        final progress = task?.progress ?? 0.0;
 
         return Padding(
           padding: const EdgeInsets.all(12),
@@ -238,18 +242,16 @@ class VideoListItem extends StatelessWidget {
       }
     });
   }
-  Widget _buildDownloadStateWidget(VideoDownloadManager downloadManager, String status, double progress) {
+  Widget _buildDownloadStateWidget(VideoDownloadManager downloadManager, DownloadStatus status, double progress) {
     switch (status) {
-      case 'downloading':
+      case DownloadStatus.downloading:
         return _buildDownloadingWidget(downloadManager, progress);
-      case 'paused':
+      case DownloadStatus.paused:
         return _buildPausedWidget(downloadManager, progress);
-      case 'completed':
+      case DownloadStatus.completed:
         return _buildCompletedWidget(downloadManager);
-      case 'error':
+      case DownloadStatus.error:
         return _buildErrorWidget(downloadManager);
-      case 'connecting':
-        return _buildConnectingWidget();
       default:
         return _buildNotStartedWidget(downloadManager);
     }
@@ -546,124 +548,74 @@ class VideoListItem extends StatelessWidget {
         _buildActionButton(
           icon: Icons.refresh,
           color: Colors.blue,
-          onTap: () => downloadManager.downloadVideo(video),
+          onTap: () => downloadManager.startDownload(video),
           tooltip: 'إعادة المحاولة',
         ),
       ],
     );
   }
 
-  Widget _buildConnectingWidget() {
-    return Row(
-      children: [
-        // Loading Spinner
-        SizedBox(
-          width: 40,
-          height: 40,
-          child: CircularProgressIndicator(
-            strokeWidth: 3,
-            valueColor: AlwaysStoppedAnimation<Color>(ColorTheme.primary),
-          ),
-        ),
-
-        SizedBox(width: 12),
-
-        // Connecting Info
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'جاري الاتصال بالخادم...',
-                style: TextStyle(
-                  fontWeight: FontWeight.w600,
-                  color: ColorTheme.primary,
-                  fontSize: 14,
-                ),
-              ),
-              SizedBox(height: 4),
-              Text(
-                'يرجى الانتظار',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.grey[600],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
   Widget _buildNotStartedWidget(VideoDownloadManager downloadManager) {
-    return FutureBuilder<bool>(
-      future: downloadManager.canResumeDownload(video.id),
-      builder: (context, snapshot) {
-        final canResume = snapshot.data ?? false;
-
-        return InkWell(
-          onTap: () => downloadManager.downloadVideo(video),
-          borderRadius: BorderRadius.circular(8),
-          child: Container(
-            padding: EdgeInsets.symmetric(vertical: 8),
-            child: Row(
-              children: [
-                // Download Icon
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: ColorTheme.primary.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(
-                    canResume ? Icons.play_arrow : Icons.download,
-                    color: ColorTheme.primary,
-                    size: 24,
-                  ),
-                ),
-
-                SizedBox(width: 12),
-
-                // Download Info
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        canResume ? 'استئناف التحميل' : 'تحميل للمشاهدة بدون إنترنت',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          color: ColorTheme.primary,
-                          fontSize: 14,
-                        ),
-                      ),
-                      SizedBox(height: 4),
-                      Text(
-                        canResume ? 'يمكن استكمال التحميل من حيث توقف' : 'اضغط لبدء التحميل',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey[600],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                SizedBox(width: 12),
-
-                // Download Arrow
-                Icon(
-                  Icons.arrow_forward_ios,
-                  color: ColorTheme.primary,
-                  size: 16,
-                ),
-              ],
+    return InkWell(
+      onTap: () => downloadManager.startDownload(video),
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            // Download Icon
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: ColorTheme.primary.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(
+                Icons.download,
+                color: ColorTheme.primary,
+                size: 24,
+              ),
             ),
-          ),
-        );
-      },
+
+            SizedBox(width: 12),
+
+            // Download Info
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'تحميل للمشاهدة بدون إنترنت',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: ColorTheme.primary,
+                      fontSize: 14,
+                    ),
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    'اضغط لبدء التحميل',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            SizedBox(width: 12),
+
+            // Download Arrow
+            Icon(
+              Icons.arrow_forward_ios,
+              color: ColorTheme.primary,
+              size: 16,
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -719,7 +671,7 @@ class VideoListItem extends StatelessWidget {
           ),
           ElevatedButton(
             onPressed: () {
-              manager.deleteDownloadedVideo(video.id);
+              manager.deleteDownload(video.id);
               Get.back();
               Get.snackbar(
                 'تم الحذف',

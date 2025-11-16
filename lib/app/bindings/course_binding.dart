@@ -1,7 +1,7 @@
-import 'package:course_platform/app/controllers/video_download_manager.dart';
 import 'package:get/get.dart';
 import '../controllers/course_controller.dart';
 import '../controllers/video_controller.dart';
+import '../controllers/video_download_manager.dart';
 import '../data/repositories/course_repository.dart';
 import '../data/repositories/video_repository.dart';
 import '../data/repositories/file_repository.dart';
@@ -33,6 +33,10 @@ class CourseBinding extends Bindings {
     Get.lazyPut<VideoController>(() => VideoController(
       videoRepository: Get.find<VideoRepository>(),
     ));
-    Get.lazyPut<VideoDownloadManager>(() => VideoDownloadManager());
+    
+    // Initialize VideoDownloadManager as permanent singleton (only once)
+    if (!Get.isRegistered<VideoDownloadManager>()) {
+      Get.put<VideoDownloadManager>(VideoDownloadManager(), permanent: true);
+    }
   }
 }

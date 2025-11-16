@@ -1,622 +1,671 @@
-import 'dart:math';
-
+import 'dart:io';
 import 'package:course_platform/app/controllers/permission_manager.dart';
 import 'package:dio/dio.dart';
 import 'package:get/get.dart';
 import 'package:path_provider/path_provider.dart';
-import 'dart:io';
 import '../data/models/video.dart';
 import '../data/repositories/video_repository.dart';
 import '../services/network_service.dart';
 import '../services/storage_service.dart';
+import 'package:flutter/material.dart';
 
 class VideoDownloadManager extends GetxController {
-  final NetworkService _downloadService = Get.find<NetworkService>();
-  final VideoRepository _videoRepository = Get.find<VideoRepository>();
+  final NetworkService _networkService = Get.find<NetworkService>();
+  late VideoRepository _videoRepository;
   final StorageService _storageService = Get.find<StorageService>();
 
-  // Reactive download progress for each video
-  final RxMap<String, double> downloadProgress = <String, double>{}.obs;
+  // Simple state management
+  final RxMap<String, DownloadTask> _downloadTasks = <String, DownloadTask>{}.obs;
+  final RxMap<String, CancelToken> _cancelTokens = <String, CancelToken>{}.obs;
 
-  // Reactive map to track downloaded videos
-  final RxMap<String, bool> downloadedVideos = <String, bool>{}.obs;
-
-  // Map to store local file paths for downloaded videos
-  final RxMap<String, String> downloadedVideoFiles = <String, String>{}.obs;
-
-  final RxMap<String, String> downloadStatus = <String, String>{}.obs;
-  final RxMap<String, bool> isPaused = <String, bool>{}.obs;
-  final RxMap<String, CancelToken> cancelTokens = <String, CancelToken>{}.obs;
-  final RxMap<String, int> downloadedBytes = <String, int>{}.obs;
-  final RxMap<String, int> totalBytes = <String, int>{}.obs;
-
-  // Optional: Add a course ID to track downloads for a specific course
-  String? _currentCourseId;
+  // Getters for UI
+  RxMap<String, DownloadTask> get downloadTasks => _downloadTasks;
 
   @override
   void onInit() {
     super.onInit();
-    // Initialize by checking existing downloads
-    _initializeDownloadedVideos();
-    checkPreviousDownloads(); // Add this line
+    // Delay repository initialization until it's available
+    _initializeRepository();
   }
 
-  Future<void> _restoreDownloadStates() async {
+  void _initializeRepository() {
     try {
-      print('🔄 Restoring download states...');
+      _videoRepository = Get.find<VideoRepository>();
+      _loadSavedDownloads();
+    } catch (e) {
+      // Repository not ready yet, will retry when needed
+      print('VideoRepository not ready yet: $e');
+    }
+  }
 
-      // Get all videos that have partial download info
-      final downloadedList = await _storageService.getDownloadedVideosList();
-
-      for (String videoId in downloadedList) {
-        // Check if video is fully downloaded
-        final String? path = await _storageService.getVideoPath(videoId);
-        if (path != null && path.isNotEmpty) {
-          final File videoFile = File(path);
-          if (await videoFile.exists()) {
-            final fileSize = await videoFile.length();
-            if (fileSize > 0) {
-              // File exists and is downloadVideo
-              downloadedVideos[videoId] = true;
-              downloadedVideoFiles[videoId] = path;
-              downloadStatus[videoId] = 'completed';
-              downloadProgress[videoId] = 1.0;
-              print('✅ Restored completed download: $videoId');
-              continue;
-            }
-          }
-        }
-
-        // Check for partial downloads
-        final partialInfo =
-            await _storageService.getPartialDownloadInfo(videoId);
-        if (partialInfo != null) {
-          final tempPath = path != null ? '$path.tmp' : null;
-
-          if (tempPath != null && await File(tempPath).exists()) {
-            // Partial file exists
-            final actualSize = await File(tempPath).length();
-            final savedDownloadedBytes = partialInfo['downloadedBytes'] as int;
-            final savedTotalBytes = partialInfo['totalBytes'] as int;
-
-            // Use actual file size (more reliable)
-            downloadedBytes[videoId] = actualSize;
-            totalBytes[videoId] = savedTotalBytes;
-
-            final progress = actualSize / savedTotalBytes;
-            downloadProgress[videoId] = progress;
-            downloadStatus[videoId] = 'paused';
-            isPaused[videoId] = true;
-
-            print(
-                '📥 Restored paused download: $videoId (${(progress * 100).toStringAsFixed(1)}%)');
+  /// Load previously downloaded and in-progress videos
+  Future<void> _loadSavedDownloads() async {
+    try {
+      print('🔄 Loading saved downloads...');
+      
+      // Get all saved download tasks
+      final savedTasks = await _storageService.getAllDownloadTasks();
+      
+      for (var taskData in savedTasks) {
+        final task = DownloadTask.fromJson(taskData);
+        
+        // Check if file exists for completed downloads
+        if (task.status == DownloadStatus.completed) {
+          final file = File(task.localPath);
+          if (await file.exists()) {
+            _downloadTasks[task.videoId] = task;
+            print('✅ Found completed download: ${task.videoId}');
           } else {
-            // Partial info exists but no temp file - clean up
-            await _storageService.removePartialDownloadInfo(videoId);
-            await _storageService.removeVideoFromDownloadedList(videoId);
-            print('🧹 Cleaned up invalid partial download: $videoId');
+            // File missing, remove from storage
+            await _storageService.removeDownloadTask(task.videoId);
+            print('🗑️ Removed missing file: ${task.videoId}');
           }
         }
-      }
-
-      print('✅ Download states restoration completed');
-    } catch (e) {
-      print('❌ Error restoring download states: $e');
-    }
-  }
-
-  Future<void> checkPreviousDownloads() async {
-    try {
-      final downloadedList = await _storageService.getDownloadedVideosList();
-
-      for (String videoId in downloadedList) {
-        // Check if file still exists
-        final String? path = await _storageService.getVideoPath(videoId);
-        if (path != null && path.isNotEmpty) {
-          final File videoFile = File(path);
-          if (await videoFile.exists()) {
-            downloadedVideos[videoId] = true;
-            downloadedVideoFiles[videoId] = path;
-            downloadStatus[videoId] = 'completed';
-            downloadProgress[videoId] = 1.0;
+        // For paused downloads, check if temp file exists
+        else if (task.status == DownloadStatus.paused) {
+          final tempFile = File('${task.localPath}.tmp');
+          if (await tempFile.exists()) {
+            _downloadTasks[task.videoId] = task;
+            print('⏸️ Found paused download: ${task.videoId}');
           } else {
-            // File missing, clean up
-            await _storageService.removeVideoFromDownloadedList(videoId);
-          }
-        }
-
-        // Check for partial downloads
-        final partialInfo =
-            await _storageService.getPartialDownloadInfo(videoId);
-        if (partialInfo != null && !downloadedVideos.containsKey(videoId)) {
-          final tempPath = path != null ? '$path.tmp' : null;
-          if (tempPath != null && await File(tempPath).exists()) {
-            downloadStatus[videoId] = 'paused';
-            final progress =
-                partialInfo['downloadedBytes'] / partialInfo['totalBytes'];
-            downloadProgress[videoId] = progress;
-            isPaused[videoId] = true;
+            // Temp file missing, reset task
+            await _storageService.removeDownloadTask(task.videoId);
+            print('🗑️ Removed orphaned task: ${task.videoId}');
           }
         }
       }
+      
+      print('✅ Loaded ${_downloadTasks.length} saved downloads');
     } catch (e) {
-      print('Error checking previous downloads: $e');
+      print('❌ Error loading saved downloads: $e');
     }
   }
 
-  // New method to initialize downloads on app start
-  Future<void> _initializeDownloadedVideos() async {
+  /// Ensure repository is initialized (call this from UI when needed)
+  void ensureRepositoryInitialized() {
+    if (!Get.isRegistered<VideoRepository>()) {
+      return;
+    }
+    
     try {
-      // Get list of all downloaded videos from storage
-      final downloadedList = await _storageService.getDownloadedVideosList();
-
-      if (downloadedList.isNotEmpty) {
-        for (String videoId in downloadedList) {
-          final String? path = await _storageService.getVideoPath(videoId);
-          if (path != null && path.isNotEmpty) {
-            final File videoFile = File(path);
-            if (await videoFile.exists()) {
-              downloadedVideos[videoId] = true;
-              downloadedVideoFiles[videoId] = path;
-            } else {
-              await _storageService.removeVideoFromDownloadedList(videoId);
-            }
-          }
-        }
+      _videoRepository = Get.find<VideoRepository>();
+      // Load saved downloads if not already loaded
+      if (_downloadTasks.isEmpty) {
+        _loadSavedDownloads();
       }
     } catch (e) {
-      print('Error initializing downloaded videos: $e');
+      print('Error initializing repository: $e');
     }
   }
 
-  // Check which videos are already downloaded for a specific course
-  Future<void> checkExistingDownloads(String courseId) async {
-    _currentCourseId = courseId;
+  /// Start downloading a video
+  Future<bool> startDownload(Video video) async {
     try {
-      // Fetch videos for the specific course
-      final videos = await _videoRepository.getVideosByCourse(courseId);
-
-      // Check download status for each video
-      for (var video in videos) {
-        final isDownloaded = await isVideoDownloaded(video.id);
-        downloadedVideos[video.id] = isDownloaded;
-
-        if (isDownloaded) {
-          final localPath = await getLocalVideoPath(video.id);
-          if (localPath != null) {
-            downloadedVideoFiles[video.id] = localPath;
-          }
-        }
+      // Check permissions
+      final hasPermission = await PermissionManager.requestStoragePermission();
+      if (!hasPermission) {
+        _showError('تحتاج للسماح بالوصول للتخزين');
+        return false;
       }
-    } catch (e) {
-      print('Error checking existing downloads: $e');
-      Get.snackbar(
-        'خطأ',
-        'فشل التحقق من حالة التنزيلات',
-        snackPosition: SnackPosition.BOTTOM,
-      );
-    }
-  }
 
-  // Download a single video
-  Future<bool> downloadVideo(Video video) async {
-    final hasPermission = await PermissionManager.requestStoragePermission();
-    if (!hasPermission) return false;
-
-    // Check if already downloading
-    if (downloadStatus[video.id] == 'downloading') {
-      print('Video ${video.id} is already downloading');
-      return false;
-    }
-
-    print('🚀 Starting download for video: ${video.id}');
-
-    // Check for invalid partial downloads and clear them
-    final partialInfo = await _storageService.getPartialDownloadInfo(video.id);
-    if (partialInfo != null) {
-      final savedDownloaded = partialInfo['downloadedBytes'] as int? ?? 0;
-      final savedTotal = partialInfo['totalBytes'] as int? ?? 0;
-
-      if (savedTotal <= 0 ||
-          savedDownloaded < 0 ||
-          savedDownloaded > savedTotal) {
-        print('⚠️ Found invalid partial download, clearing...');
-        await clearInvalidDownload(video.id);
+      // Check if already downloading
+      final existingTask = _downloadTasks[video.id];
+      if (existingTask?.status == DownloadStatus.downloading) {
+        print('⚠️ Video ${video.id} is already downloading');
+        return false;
       }
-    }
 
-    final String videoUrl =
-        '${Get.find<NetworkService>().baseUrl}/${video.filePath}';
+      print('🚀 Starting download for video: ${video.id}');
 
-    try {
-      final cancelToken = CancelToken();
-      cancelTokens[video.id] = cancelToken;
+      // Create download directory
+      final downloadDir = await _getDownloadDirectory();
+      final fileName = '${video.id}_${DateTime.now().millisecondsSinceEpoch}.mp4';
+      final localPath = '${downloadDir.path}/$fileName';
 
-      downloadStatus[video.id] = 'downloading';
-      isPaused[video.id] = false;
-      downloadProgress[video.id] = 0.0;
-      downloadedBytes[video.id] = 0;
-      totalBytes[video.id] = 0;
-
-      final String? localPath = await _downloadService.downloadVideoPrivately(
-        videoUrl: videoUrl,
+      // Create download task
+      final task = DownloadTask(
         videoId: video.id,
-        onProgress: (received, total) {
-          if (isPaused[video.id] == true) return;
-
-          // Validate progress data
-          if (total <= 0 || received < 0 || received > total) {
-            print('⚠️ Invalid progress data: $received/$total');
-            return;
-          }
-
-          downloadedBytes[video.id] = received;
-          totalBytes[video.id] = total;
-          downloadProgress[video.id] = received / total;
-
-          if (received >= total) {
-            downloadStatus[video.id] = 'completed';
-            downloadedVideos[video.id] = true;
-            isPaused[video.id] = false;
-            cancelTokens.remove(video.id);
-            _storageService.removePartialDownloadInfo(video.id);
-          }
-        },
-        onStatusChange: (status) {
-          print('📱 Status change for ${video.id}: $status');
-          downloadStatus[video.id] = status;
-
-          if (status == 'completed') {
-            downloadedBytes.remove(video.id);
-            totalBytes.remove(video.id);
-          }
-        },
+        videoTitle: video.title,
+        localPath: localPath,
+        status: DownloadStatus.downloading,
+        progress: 0.0,
+        downloadedBytes: 0,
+        totalBytes: 0,
+        createdAt: DateTime.now(),
       );
 
-      if (localPath != null) {
-        downloadedVideoFiles[video.id] = localPath;
-        await _storageService.saveVideoPath(video.id, localPath);
-        await _storageService.addVideoToDownloadedList(video.id);
+      // Update UI immediately
+      _downloadTasks[video.id] = task;
+      await _storageService.saveDownloadTask(video.id, task.toJson());
 
-        final videoDetails = await _videoRepository.getVideoDetails(video.id);
-        if (videoDetails != null) {
-          await _storageService.saveVideoDetails(
-              video.id, videoDetails.toJson());
-        }
-
-        return true;
-      }
-      return false;
+      // Start download in background
+      _performDownload(video, task);
+      
+      return true;
     } catch (e) {
-      print('❌ Download error for ${video.id}: $e');
-
-      if (e.toString().contains('cancel')) {
-        downloadStatus[video.id] = 'paused';
-        isPaused[video.id] = true;
-
-        // Only save progress if we have valid tracking data
-        if (downloadedBytes.containsKey(video.id) &&
-            totalBytes.containsKey(video.id) &&
-            totalBytes[video.id]! > 0) {
-          try {
-            await _saveDownloadProgress(video.id, downloadedBytes[video.id]!, totalBytes[video.id]!);
-          } catch (saveError) {
-            print('Error saving progress on pause: $saveError');
-          }
-        }
-        print('⏸️ Download paused due to cancellation: ${video.id}');
-      } else {
-        downloadStatus[video.id] = 'error';
-
-        // Clear all tracking data on error
-        downloadProgress.remove(video.id);
-        isPaused.remove(video.id);
-        cancelTokens.remove(video.id);
-        downloadedBytes.remove(video.id);
-        totalBytes.remove(video.id);
-
-        // Clear invalid download state
-        await clearInvalidDownload(video.id);
-      }
-
+      print('❌ Error starting download: $e');
+      _showError('فشل في بدء التحميل');
       return false;
     }
   }
 
-  Future<void> _saveDownloadProgress(String videoId, int downloaded, int total) async {
-    try {
-      if (total > 0 && downloaded >= 0 && downloaded <= total) {
-        await _storageService.savePartialDownloadInfo(videoId, downloaded, total);
-        print('💾 Saved progress for $videoId: ${downloaded / 1024 / 1024} MB / ${total / 1024 / 1024} MB');
-      } else {
-        print('⚠️ Invalid progress data, not saving: $downloaded/$total');
-      }
-    } catch (e) {
-      print('Error saving download progress: $e');
-    }
-  }
-
-
-  Future<void> _handleDownloadSuccess(String videoId, String filePath) async {
-    try {
-      // Update storage
-      await _storageService.saveVideoPath(videoId, filePath);
-      await _storageService.addVideoToDownloadedList(videoId);
-      await _storageService.removePartialDownloadInfo(videoId);
-
-      // Update download manager state
-      downloadedVideoFiles[videoId] = filePath;
-      downloadStatus[videoId] = 'completed';
-      downloadedVideos[videoId] = true;
-
-      // Clean up tracking data
-      downloadProgress.remove(videoId);
-      downloadedBytes.remove(videoId);
-      totalBytes.remove(videoId);
-      isPaused.remove(videoId);
-      cancelTokens.remove(videoId);
-
-      print('✅ Successfully handled download completion for: $videoId');
-    } catch (e) {
-      print('❌ Error handling download success: $e');
-    }
-  }
-
-  Future<void> clearInvalidDownload(String videoId) async {
-    try {
-      print('🧹 Clearing invalid download for: $videoId');
-
-      // Remove partial download info
-      await _storageService.removePartialDownloadInfo(videoId);
-
-      // Get and delete temp file if it exists
-      final savedPath = await _storageService.getVideoPath(videoId);
-      if (savedPath != null && savedPath.isNotEmpty) {
-        final tempFile = File('$savedPath.tmp');
-        if (await tempFile.exists()) {
-          try {
-            await tempFile.delete();
-            print('🗑️ Deleted temp file: $savedPath.tmp');
-          } catch (e) {
-            print('Error deleting temp file: $e');
-          }
-        }
-
-        // Also check for corrupted final file
-        final finalFile = File(savedPath);
-        if (await finalFile.exists()) {
-          final size = await finalFile.length();
-          if (size <= 1024) { // File is too small, likely corrupted
-            try {
-              await finalFile.delete();
-              print('🗑️ Deleted corrupted final file: $savedPath');
-            } catch (e) {
-              print('Error deleting corrupted final file: $e');
-            }
-          }
-        }
-      }
-
-      // Clear download state
-      downloadStatus.remove(videoId);
-      downloadProgress.remove(videoId);
-      downloadedBytes.remove(videoId);
-      totalBytes.remove(videoId);
-      isPaused.remove(videoId);
-      cancelTokens.remove(videoId);
-
-      print('✅ Cleared invalid download state for: $videoId');
-    } catch (e) {
-      print('❌ Error clearing invalid download: $e');
-    }
-  }
-
+  /// Pause download
   Future<void> pauseDownload(String videoId) async {
     try {
-      print('⏸️ Attempting to pause download for: $videoId');
-
-      final cancelToken = cancelTokens[videoId];
+      print('⏸️ Pausing download: $videoId');
+      
+      // Cancel the download
+      final cancelToken = _cancelTokens[videoId];
       if (cancelToken != null && !cancelToken.isCancelled) {
         cancelToken.cancel('Download paused by user');
-        print('✅ Cancel token cancelled for: $videoId');
       }
 
-      // Update status immediately
-      downloadStatus[videoId] = 'paused';
-      isPaused[videoId] = true;
-
-      // Force save current progress with current download state
-      if (downloadedBytes.containsKey(videoId) &&
-          totalBytes.containsKey(videoId)) {
-        final currentDownloaded = downloadedBytes[videoId]!;
-        final currentTotal = totalBytes[videoId]!;
-
-        print(
-            '💾 Saving progress on pause: ${currentDownloaded / 1024 / 1024} MB / ${currentTotal / 1024 / 1024} MB');
-        await _storageService.savePartialDownloadInfo(
-            videoId, currentDownloaded, currentTotal);
-
-        // Also ensure the file path is saved
-        final currentPath = await _storageService.getVideoPath(videoId);
-        if (currentPath == null || currentPath.isEmpty) {
-          // Generate and save a consistent path
-          final videoDir = await _getVideoDirectory();
-          final filename = _generateSecureFilename();
-          final newPath = '${videoDir.path}/$filename';
-          await _storageService.saveVideoPath(videoId, newPath);
-          print('💾 Generated and saved new video path: $newPath');
-        }
+      // Update task status
+      final task = _downloadTasks[videoId];
+      if (task != null) {
+        final updatedTask = task.copyWith(status: DownloadStatus.paused);
+        _downloadTasks[videoId] = updatedTask;
+        await _storageService.saveDownloadTask(videoId, updatedTask.toJson());
       }
 
-      print('⏸️ Download paused successfully for: $videoId');
+      _cancelTokens.remove(videoId);
+      print('✅ Download paused: $videoId');
     } catch (e) {
       print('❌ Error pausing download: $e');
     }
   }
 
-  Future<Directory> _getVideoDirectory() async {
-    final appDir = await getApplicationDocumentsDirectory();
-    final videoDir = Directory('${appDir.path}/videos');
-    if (!await videoDir.exists()) {
-      await videoDir.create(recursive: true);
-    }
-    return videoDir;
-  }
-
-  String _generateSecureFilename() {
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final random = Random();
-    final randomString = List.generate(
-        8,
-        (index) =>
-            'abcdefghijklmnopqrstuvwxyz0123456789'[random.nextInt(36)]).join();
-    return 'video_${timestamp}_$randomString.dat';
-  }
-
-  Future<bool> resumeDownload(String videoId) async {
+  /// Resume download
+  Future<void> resumeDownload(String videoId) async {
     try {
-      if (downloadStatus[videoId] != 'paused') {
-        print('Cannot resume - video is not paused');
-        return false;
+      final task = _downloadTasks[videoId];
+      if (task == null || task.status != DownloadStatus.paused) {
+        print('⚠️ Cannot resume - invalid task state');
+        return;
       }
 
-      // Get video details to resume download
-      final videoDetails = await _videoRepository.getVideoDetails(videoId);
-      if (videoDetails == null) {
-        print('Cannot resume - video details not found');
-        return false;
+      print('▶️ Resuming download: $videoId');
+
+      // Ensure repository is available
+      if (!Get.isRegistered<VideoRepository>()) {
+        print('❌ VideoRepository not available for resume');
+        return;
       }
 
-      print('▶️ Resuming download for video: $videoId');
+      // Get video details
+      final video = await _videoRepository.getVideoDetails(videoId);
+      if (video == null) {
+        print('❌ Video not found for resume');
+        return;
+      }
 
-      // Remove paused state but keep progress data
-      isPaused.remove(videoId);
-      cancelTokens.remove(videoId);
+      // Update status to downloading
+      final updatedTask = task.copyWith(status: DownloadStatus.downloading);
+      _downloadTasks[videoId] = updatedTask;
+      await _storageService.saveDownloadTask(videoId, updatedTask.toJson());
 
-      // Restart download (it will automatically resume from saved progress)
-      return await downloadVideo(videoDetails);
+      // Resume download
+      _performDownload(video, updatedTask);
     } catch (e) {
-      print('Error resuming download: $e');
-      return false;
+      print('❌ Error resuming download: $e');
     }
   }
 
+  /// Cancel download completely
   Future<void> cancelDownload(String videoId) async {
     try {
-      final cancelToken = cancelTokens[videoId];
+      print('❌ Cancelling download: $videoId');
+
+      // Cancel the download
+      final cancelToken = _cancelTokens[videoId];
       if (cancelToken != null && !cancelToken.isCancelled) {
         cancelToken.cancel('Download cancelled by user');
       }
 
-      // Clean up all download data
-      downloadProgress.remove(videoId);
-      downloadStatus.remove(videoId);
-      isPaused.remove(videoId);
-      cancelTokens.remove(videoId);
-      downloadedBytes.remove(videoId);
-      totalBytes.remove(videoId);
+      // Get task for cleanup
+      final task = _downloadTasks[videoId];
+      
+      // Remove from memory and storage
+      _downloadTasks.remove(videoId);
+      _cancelTokens.remove(videoId);
+      await _storageService.removeDownloadTask(videoId);
 
-      // Remove partial download info and temp files
-      await _storageService.removePartialDownloadInfo(videoId);
-
-      // Delete temp file if exists
-      final path = await _storageService.getVideoPath(videoId);
-      if (path != null) {
-        final tempFile = File('$path.tmp');
+      // Delete temp file
+      if (task != null) {
+        final tempFile = File('${task.localPath}.tmp');
         if (await tempFile.exists()) {
           await tempFile.delete();
-          print('🗑️ Deleted temp file: $path.tmp');
+          print('🗑️ Deleted temp file');
         }
       }
 
-      // Remove from downloaded list
-      await _storageService.removeVideoFromDownloadedList(videoId);
-
-      print('❌ Download cancelled for video: $videoId');
+      print('✅ Download cancelled: $videoId');
     } catch (e) {
-      print('Error cancelling download: $e');
+      print('❌ Error cancelling download: $e');
     }
   }
 
-  Future<bool> canResumeDownload(String videoId) async {
+  /// Delete downloaded video
+  Future<void> deleteDownload(String videoId) async {
     try {
-      final partialInfo = await _storageService.getPartialDownloadInfo(videoId);
-      if (partialInfo == null) return false;
+      print('🗑️ Deleting download: $videoId');
 
-      final existingPath = await _storageService.getVideoPath(videoId);
-      if (existingPath == null) return false;
+      final task = _downloadTasks[videoId];
+      if (task == null) return;
 
-      final tempFile = File('$existingPath.tmp');
-      return await tempFile.exists();
+      // Delete the file
+      final file = File(task.localPath);
+      if (await file.exists()) {
+        await file.delete();
+      }
+
+      // Remove from memory and storage
+      _downloadTasks.remove(videoId);
+      await _storageService.removeDownloadTask(videoId);
+
+      print('✅ Download deleted: $videoId');
+      _showSuccess('تم حذف الفيديو بنجاح');
     } catch (e) {
-      print('Error checking resume capability: $e');
-      return false;
+      print('❌ Error deleting download: $e');
+      _showError('فشل في حذف الفيديو');
     }
+  }
+
+  /// Perform the actual download
+  Future<void> _performDownload(Video video, DownloadTask task) async {
+    CancelToken? cancelToken;
+    
+    try {
+      // Create cancel token
+      cancelToken = CancelToken();
+      _cancelTokens[video.id] = cancelToken;
+
+      final videoUrl = '${_networkService.baseUrl}/${video.filePath}';
+      final tempPath = '${task.localPath}.tmp';
+      
+      // Check for existing temp file (for resume)
+      int startByte = 0;
+      
+      // If task has downloadedBytes > 0, this is a resume operation
+      if (task.downloadedBytes > 0) {
+        final tempFile = File(tempPath);
+        if (await tempFile.exists()) {
+          final actualFileSize = await tempFile.length();
+          
+          // Use the actual file size for resume
+          startByte = actualFileSize;
+          print('📦 Resuming from saved progress: ${startByte / 1024 / 1024} MB');
+          
+          // Validate that we have valid total bytes
+          if (task.totalBytes <= 0) {
+            print('⚠️ No valid total bytes, starting fresh');
+            startByte = 0;
+            await tempFile.delete();
+          }
+        } else {
+          print('⚠️ Temp file missing, starting fresh');
+          startByte = 0;
+        }
+      }
+
+      print('📡 Downloading from byte: $startByte');
+
+      // Setup headers
+      final headers = <String, dynamic>{
+        'Authorization': 'Bearer ${_storageService.getToken()}',
+      };
+      
+      if (startByte > 0) {
+        headers['Range'] = 'bytes=$startByte-';
+        print('📡 Using Range header: bytes=$startByte-');
+      }
+
+      // Create temp file if it doesn't exist or if starting fresh
+      final tempFile = File(tempPath);
+      if (!await tempFile.exists() || startByte == 0) {
+        await tempFile.create(recursive: true);
+        if (startByte == 0) {
+          // Write empty file for new downloads
+          await tempFile.writeAsBytes([]);
+        }
+      }
+
+      // Use a custom download approach for better control
+      final response = await _networkService.dio.get<ResponseBody>(
+        videoUrl,
+        cancelToken: cancelToken,
+        options: Options(
+          headers: headers,
+          responseType: ResponseType.stream,
+          receiveDataWhenStatusError: false,
+        ),
+      );
+
+      if (response.data == null) {
+        throw Exception('No response data received');
+      }
+
+      // Get content length
+      final contentLength = response.headers.value('content-length');
+      final contentRange = response.headers.value('content-range');
+      
+      int totalFileSize = 0;
+      if (contentRange != null) {
+        // Parse Content-Range: bytes start-end/total
+        final rangeMatch = RegExp(r'bytes (\d+)-(\d+)/(\d+)').firstMatch(contentRange);
+        if (rangeMatch != null) {
+          totalFileSize = int.parse(rangeMatch.group(3)!);
+        }
+      } else if (contentLength != null) {
+        totalFileSize = startByte + int.parse(contentLength);
+      } else {
+        throw Exception('Unable to determine file size');
+      }
+
+      print('📊 Total file size: ${totalFileSize / 1024 / 1024} MB');
+
+      // Open file for writing (append mode if resuming)
+      final RandomAccessFile raf = await tempFile.open(mode: startByte > 0 ? FileMode.writeOnlyAppend : FileMode.writeOnly);
+      
+      int downloadedBytes = startByte;
+      
+      try {
+        await for (final chunk in response.data!.stream) {
+          if (cancelToken.isCancelled) {
+            print('⏸️ Download cancelled during streaming');
+            break;
+          }
+          
+          // Write chunk to file
+          await raf.writeFrom(chunk);
+          downloadedBytes += chunk.length;
+          
+          // Calculate progress
+          final progress = downloadedBytes / totalFileSize;
+
+          // Update task
+          final updatedTask = task.copyWith(
+            progress: progress,
+            downloadedBytes: downloadedBytes,
+            totalBytes: totalFileSize,
+          );
+          
+          _downloadTasks[video.id] = updatedTask;
+          
+          // Save progress periodically (every ~1MB)
+          if (downloadedBytes % (1024 * 1024) < chunk.length) {
+            await _storageService.saveDownloadTask(video.id, updatedTask.toJson());
+          }
+          
+          // Log progress occasionally
+          if (downloadedBytes % (5 * 1024 * 1024) < chunk.length) { // Every 5MB
+            print('📥 Progress: ${(progress * 100).toStringAsFixed(1)}% (${downloadedBytes / 1024 / 1024} MB / ${totalFileSize / 1024 / 1024} MB)');
+          }
+        }
+      } finally {
+        await raf.close();
+      }
+
+      // Check if download was cancelled
+      if (cancelToken.isCancelled) {
+        print('⏸️ Download was cancelled/paused');
+        return;
+      }
+
+      // Verify download completion
+      final finalFileSize = await tempFile.length();
+      if (finalFileSize >= totalFileSize) {
+        // Move temp file to final location
+        await tempFile.rename(task.localPath);
+        print('📁 Moved temp file to final location: ${task.localPath}');
+
+        // Update task as completed
+        final completedTask = task.copyWith(
+          status: DownloadStatus.completed,
+          progress: 1.0,
+          completedAt: DateTime.now(),
+        );
+        
+        _downloadTasks[video.id] = completedTask;
+        await _storageService.saveDownloadTask(video.id, completedTask.toJson());
+
+        print('✅ Download completed: ${video.id}');
+        _showSuccess('تم تحميل ${video.title} بنجاح');
+      } else {
+        print('⚠️ Download incomplete: ${finalFileSize}/${totalFileSize} bytes');
+      }
+
+      // Cleanup
+      _cancelTokens.remove(video.id);
+
+    } catch (e) {
+      print('❌ Download error: $e');
+      
+      // Don't show error if it was just cancelled
+      if (cancelToken?.isCancelled != true) {
+        // Update task as error
+        final errorTask = task.copyWith(status: DownloadStatus.error);
+        _downloadTasks[video.id] = errorTask;
+        await _storageService.saveDownloadTask(video.id, errorTask.toJson());
+        
+        _showError('فشل في تحميل ${video.title}');
+      }
+      
+      _cancelTokens.remove(video.id);
+    }
+  }
+
+  /// Get download directory
+  Future<Directory> _getDownloadDirectory() async {
+    final appDir = await getApplicationDocumentsDirectory();
+    final downloadDir = Directory('${appDir.path}/downloads');
+    
+    if (!await downloadDir.exists()) {
+      await downloadDir.create(recursive: true);
+    }
+    
+    return downloadDir;
+  }
+
+  // Legacy method for compatibility
+  Future<bool> downloadVideo(Video video) async {
+    return await startDownload(video);
+  }
+
+  /// Check if video is downloaded
+  bool isVideoDownloaded(String videoId) {
+    final task = _downloadTasks[videoId];
+    return task?.status == DownloadStatus.completed;
+  }
+
+  /// Get local video path
+  String? getLocalVideoPath(String videoId) {
+    final task = _downloadTasks[videoId];
+    if (task?.status == DownloadStatus.completed) {
+      return task?.localPath;
+    }
+    return null;
+  }
+
+  /// Get download progress
+  double getDownloadProgress(String videoId) {
+    return _downloadTasks[videoId]?.progress ?? 0.0;
+  }
+
+  /// Get download status
+  DownloadStatus getDownloadStatus(String videoId) {
+    return _downloadTasks[videoId]?.status ?? DownloadStatus.notStarted;
+  }
+
+  /// Legacy methods for compatibility
+  Future<bool> deleteDownloadedVideo(String videoId) async {
+    await deleteDownload(videoId);
+    return true;
   }
 
   String getDownloadStatusString(String videoId) {
-    return downloadStatus[videoId] ?? 'not_started';
+    final status = getDownloadStatus(videoId);
+    switch (status) {
+      case DownloadStatus.notStarted:
+        return 'not_started';
+      case DownloadStatus.downloading:
+        return 'downloading';
+      case DownloadStatus.paused:
+        return 'paused';
+      case DownloadStatus.completed:
+        return 'completed';
+      case DownloadStatus.error:
+        return 'error';
+    }
   }
 
-// Add method to check if download is paused
   bool isDownloadPaused(String videoId) {
-    return isPaused[videoId] ?? false;
+    return getDownloadStatus(videoId) == DownloadStatus.paused;
   }
 
-  // When deleting a video, also remove from storage service
-  Future<bool> deleteDownloadedVideo(String videoId) async {
-    final bool deleted = await _downloadService.deletePrivateVideo(videoId);
-    if (deleted) {
-      downloadedVideos[videoId] = false;
-      downloadedVideoFiles.remove(videoId);
+  /// Helper methods
+  void _showSuccess(String message) {
+    Get.snackbar(
+      'نجح',
+      message,
+      snackPosition: SnackPosition.BOTTOM,
+      backgroundColor: Get.theme.primaryColor,
+      colorText: Colors.white,
+    );
+  }
 
-      // Also remove from storage service
-      await _storageService.saveVideoPath(videoId, '');
-      await _storageService.removeVideoFromDownloadedList(videoId);
+  void _showError(String message) {
+    Get.snackbar(
+      'خطأ',
+      message,
+      snackPosition: SnackPosition.BOTTOM,
+      backgroundColor: Colors.red,
+      colorText: Colors.white,
+    );
+  }
+}
+
+/// Download Status Enum
+enum DownloadStatus {
+  notStarted,
+  downloading,
+  paused,
+  completed,
+  error,
+}
+
+/// Download Task Model
+class DownloadTask {
+  final String videoId;
+  final String videoTitle;
+  final String localPath;
+  final DownloadStatus status;
+  final double progress;
+  final int downloadedBytes;
+  final int totalBytes;
+  final DateTime createdAt;
+  final DateTime? completedAt;
+
+  DownloadTask({
+    required this.videoId,
+    required this.videoTitle,
+    required this.localPath,
+    required this.status,
+    required this.progress,
+    required this.downloadedBytes,
+    required this.totalBytes,
+    required this.createdAt,
+    this.completedAt,
+  });
+
+  DownloadTask copyWith({
+    String? videoId,
+    String? videoTitle,
+    String? localPath,
+    DownloadStatus? status,
+    double? progress,
+    int? downloadedBytes,
+    int? totalBytes,
+    DateTime? createdAt,
+    DateTime? completedAt,
+  }) {
+    return DownloadTask(
+      videoId: videoId ?? this.videoId,
+      videoTitle: videoTitle ?? this.videoTitle,
+      localPath: localPath ?? this.localPath,
+      status: status ?? this.status,
+      progress: progress ?? this.progress,
+      downloadedBytes: downloadedBytes ?? this.downloadedBytes,
+      totalBytes: totalBytes ?? this.totalBytes,
+      createdAt: createdAt ?? this.createdAt,
+      completedAt: completedAt ?? this.completedAt,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'videoId': videoId,
+      'videoTitle': videoTitle,
+      'localPath': localPath,
+      'status': status.index,
+      'progress': progress,
+      'downloadedBytes': downloadedBytes,
+      'totalBytes': totalBytes,
+      'createdAt': createdAt.toIso8601String(),
+      'completedAt': completedAt?.toIso8601String(),
+    };
+  }
+
+  factory DownloadTask.fromJson(Map<String, dynamic> json) {
+    return DownloadTask(
+      videoId: json['videoId'],
+      videoTitle: json['videoTitle'],
+      localPath: json['localPath'],
+      status: DownloadStatus.values[json['status']],
+      progress: json['progress'].toDouble(),
+      downloadedBytes: json['downloadedBytes'],
+      totalBytes: json['totalBytes'],
+      createdAt: DateTime.parse(json['createdAt']),
+      completedAt: json['completedAt'] != null 
+          ? DateTime.parse(json['completedAt']) 
+          : null,
+    );
+  }
+
+  String get statusString {
+    switch (status) {
+      case DownloadStatus.notStarted:
+        return 'لم يبدأ';
+      case DownloadStatus.downloading:
+        return 'جاري التحميل';
+      case DownloadStatus.paused:
+        return 'متوقف';
+      case DownloadStatus.completed:
+        return 'مكتمل';
+      case DownloadStatus.error:
+        return 'خطأ';
     }
-    return deleted;
   }
 
-  // Check if a video is downloaded
-  Future<bool> isVideoDownloaded(String videoId) async {
-    return await _downloadService.isVideoDownloaded(videoId);
-  }
-
-  // Get local path of a downloaded video
-  Future<String?> getLocalVideoPath(String videoId) async {
-    return await _downloadService.getPrivateVideoPath(videoId);
-  }
-
-  // Get the local file path for a downloaded video
-  String? getDownloadedVideoFile(String videoId) {
-    return downloadedVideoFiles[videoId];
-  }
-
-  // Batch download multiple videos
-  Future<void> downloadVideos(List<Video> videos) async {
-    for (var video in videos) {
-      await downloadVideo(video);
+  String get formattedSize {
+    if (totalBytes <= 0) return 'غير معروف';
+    
+    final mb = totalBytes / (1024 * 1024);
+    if (mb >= 1) {
+      return '${mb.toStringAsFixed(1)} MB';
+    } else {
+      final kb = totalBytes / 1024;
+      return '${kb.toStringAsFixed(1)} KB';
     }
   }
 
-  // Download all videos for the current course
-  Future<void> downloadAllCourseVideos() async {
-    if (_currentCourseId == null) {
-      print('No course selected for batch download');
-      return;
-    }
-
-    try {
-      final videos =
-          await _videoRepository.getVideosByCourse(_currentCourseId!);
-      await downloadVideos(videos);
-    } catch (e) {
-      print('Error downloading course videos: $e');
-      Get.snackbar(
-        'خطأ',
-        'فشل تنزيل جميع مقاطع الفيديو',
-        snackPosition: SnackPosition.BOTTOM,
-      );
+  String get progressText {
+    if (status == DownloadStatus.completed) {
+      return '100%';
+    } else if (totalBytes > 0) {
+      return '${(progress * 100).toInt()}%';
+    } else {
+      return '0%';
     }
   }
 }

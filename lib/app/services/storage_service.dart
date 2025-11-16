@@ -190,5 +190,49 @@ class StorageService extends GetxService {
     return path;
   }
 
+  /// Save download task
+  Future<void> saveDownloadTask(String videoId, Map<String, dynamic> taskData) async {
+    await _box.write('download_task_$videoId', taskData);
+    print('💾 Saved download task: $videoId');
+  }
+
+  /// Get download task
+  Future<Map<String, dynamic>?> getDownloadTask(String videoId) async {
+    return _box.read('download_task_$videoId');
+  }
+
+  /// Remove download task
+  Future<void> removeDownloadTask(String videoId) async {
+    await _box.remove('download_task_$videoId');
+    print('🗑️ Removed download task: $videoId');
+  }
+
+  /// Get all download tasks
+  Future<List<Map<String, dynamic>>> getAllDownloadTasks() async {
+    final List<Map<String, dynamic>> tasks = [];
+    
+    // Get all keys that start with 'download_task_'
+    final keys = _box.getKeys().where((key) => key.toString().startsWith('download_task_'));
+    
+    for (String key in keys) {
+      final taskData = _box.read(key);
+      if (taskData != null) {
+        tasks.add(Map<String, dynamic>.from(taskData));
+      }
+    }
+    
+    return tasks;
+  }
+
+  /// Clear all download tasks (for cleanup)
+  Future<void> clearAllDownloadTasks() async {
+    final keys = _box.getKeys().where((key) => key.toString().startsWith('download_task_'));
+    
+    for (String key in keys) {
+      await _box.remove(key);
+    }
+    
+    print('🧹 Cleared all download tasks');
+  }
 
 }

@@ -200,7 +200,7 @@ class VideoController extends GetxController {
       }
 
       // حذف الفيديو من قائمة التنزيلات
-      await _downloadManager.deleteDownloadedVideo(videoId);
+      await _downloadManager.deleteDownload(videoId);
       print("Removed video from downloads list: $videoId");
 
       // عرض رسالة للمستخدم
