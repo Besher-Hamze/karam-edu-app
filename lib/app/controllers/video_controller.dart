@@ -83,15 +83,36 @@ class VideoController extends GetxController {
 
       // التحقق من وجود الملف
       if (!await file.exists()) {
+        print('❌ Video file does not exist: $filePath');
         return false;
       }
+
+      // CRITICAL: Check if this is a temp file (should not play temp files)
+      if (filePath.endsWith('.tmp')) {
+        print('❌ Cannot play temp file: $filePath');
+        return false;
+      }
+
+      // CRITICAL: Check if file is currently being downloaded
+      // Get the video ID from the file path or check download status
+      // We'll check this in loadVideo instead to have access to videoId
 
       // التحقق من حجم الملف (يجب أن يكون أكبر من الحد الأدنى)
       final fileSize = await file.length();
       if (fileSize < 1024 * 10) { // أقل من 10 كيلوبايت يعتبر غير صالح
+        print('❌ Video file too small: ${fileSize} bytes');
         return false;
       }
 
+      // CRITICAL: Check if there's a corresponding .tmp file (download in progress)
+      final tempFile = File('$filePath.tmp');
+      if (await tempFile.exists()) {
+        print('⚠️ Temp file exists - download may be in progress: $filePath.tmp');
+        // Don't consider it valid if temp file exists (download not complete)
+        return false;
+      }
+
+      print('✅ Video file validation passed: $filePath (${fileSize / 1024 / 1024} MB)');
       return true;
     } catch (e) {
       print('Error validating video file: $e');
@@ -125,6 +146,24 @@ class VideoController extends GetxController {
       final isDownloaded = await _downloadManager.isVideoDownloaded(videoId);
       final String? localFilePath = isDownloaded ?
       await _downloadManager.getLocalVideoPath(videoId) : null;
+
+      // CRITICAL: Check if download is currently in progress or paused
+      final downloadStatus = _downloadManager.getDownloadStatusString(videoId);
+      final isDownloading = downloadStatus == 'downloading' || downloadStatus == 'paused';
+      
+      if (isDownloading) {
+        print('⚠️ Video is currently downloading or paused, cannot play local file yet');
+        // If downloading, use online playback instead
+        if (hasInternet) {
+          final String? streamUrl = await _videoRepository.getVideoUrl(videoId);
+          if (streamUrl != null) {
+            print("Video is downloading, using streaming URL instead");
+            await initializeVideoPlayer(streamUrl, isOffline: false);
+            _startHideControlsTimer();
+            return;
+          }
+        }
+      }
 
       // التحقق من صلاحية الملف المحلي
       final bool isValidLocalFile = localFilePath != null &&
@@ -259,8 +298,19 @@ class VideoController extends GetxController {
         isOfflineMode.value = false;
       }
 
-      // Initialize player
-      await videoPlayerController.value!.initialize();
+      // Initialize player with timeout
+      await videoPlayerController.value!.initialize().timeout(
+        Duration(seconds: 10),
+        onTimeout: () {
+          throw Exception('Video initialization timeout');
+        },
+      );
+
+      // CRITICAL: Additional validation - check if video has valid duration
+      final duration = videoPlayerController.value!.value.duration;
+      if (duration == Duration.zero || duration.inSeconds < 1) {
+        throw Exception('Video has invalid duration: $duration');
+      }
 
       // Set up listeners
       videoPlayerController.value!.addListener(_videoPlayerListener);
@@ -279,18 +329,83 @@ class VideoController extends GetxController {
       return true; // تهيئة ناجحة
     } catch (e) {
       print('Error initializing video player: $e');
+      print('Error details: ${e.toString()}');
       isVideoInitialized.value = false;
 
-      // إذا كان الخطأ في وضع عدم الاتصال، اعتبر الملف تالفًا
+      // إذا كان الخطأ في وضع عدم الاتصال، تحقق أولاً إذا كان التنزيل قيد التنفيذ
       if (isOffline && _currentLocalFilePath != null && currentVideo.value != null) {
-        // حذف الملف التالف
-        await _handleCorruptedLocalFile(currentVideo.value!.id, _currentLocalFilePath!);
+        final videoId = currentVideo.value!.id;
+        
+        // CRITICAL: Check if download is in progress before deleting
+        final downloadStatus = _downloadManager.getDownloadStatusString(videoId);
+        final isDownloading = downloadStatus == 'downloading' || downloadStatus == 'paused';
+        
+        if (isDownloading) {
+          print('⚠️ Download in progress, file may not be complete yet. Trying online playback instead.');
+          // Don't delete file if download is in progress - it might just be incomplete
+          if (await _hasInternetConnection() && !hasTriedOnlineFallback.value) {
+            hasTriedOnlineFallback.value = true;
+            print("Local playback failed (download in progress), trying online playback");
+            final String? streamUrl = await _videoRepository.getVideoUrl(videoId);
+            if (streamUrl != null) {
+              return await initializeVideoPlayer(streamUrl, isOffline: false);
+            }
+          }
+          return false;
+        }
+        
+        // Check if file is a temp file
+        if (_currentLocalFilePath!.endsWith('.tmp')) {
+          print('⚠️ Trying to play temp file, switching to online playback');
+          if (await _hasInternetConnection() && !hasTriedOnlineFallback.value) {
+            hasTriedOnlineFallback.value = true;
+            final String? streamUrl = await _videoRepository.getVideoUrl(videoId);
+            if (streamUrl != null) {
+              return await initializeVideoPlayer(streamUrl, isOffline: false);
+            }
+          }
+          return false;
+        }
+        
+        // Only delete if download is complete and file is truly corrupted
+        // Give it one more chance - wait a bit and retry
+        print('⚠️ Local file failed to play, waiting and retrying once...');
+        await Future.delayed(Duration(milliseconds: 500));
+        
+        try {
+          // Try to reinitialize
+          if (videoPlayerController.value != null) {
+            await videoPlayerController.value!.dispose();
+            videoPlayerController.value = null;
+          }
+          
+          videoPlayerController.value = VideoPlayerController.file(File(_currentLocalFilePath!));
+          await videoPlayerController.value!.initialize();
+          
+          final duration = videoPlayerController.value!.value.duration;
+          if (duration != Duration.zero && duration.inSeconds >= 1) {
+            // Success on retry
+            videoPlayerController.value!.addListener(_videoPlayerListener);
+            await videoPlayerController.value!.play();
+            isPlaying.value = true;
+            isVideoInitialized.value = true;
+            await videoPlayerController.value!.setPlaybackSpeed(playbackSpeed.value);
+            WakelockPlus.enable();
+            return true;
+          }
+        } catch (retryError) {
+          print('Retry also failed: $retryError');
+        }
+        
+        // If retry failed, then consider it corrupted
+        print('❌ File appears to be corrupted after retry, deleting...');
+        await _handleCorruptedLocalFile(videoId, _currentLocalFilePath!);
 
         // محاولة تشغيل الفيديو عبر الإنترنت إذا كان متاحًا
         if (await _hasInternetConnection() && !hasTriedOnlineFallback.value) {
           hasTriedOnlineFallback.value = true;
           print("Local playback failed, trying online playback");
-          final String? streamUrl = await _videoRepository.getVideoUrl(currentVideo.value!.id);
+          final String? streamUrl = await _videoRepository.getVideoUrl(videoId);
           if (streamUrl != null) {
             return await initializeVideoPlayer(streamUrl, isOffline: false);
           }

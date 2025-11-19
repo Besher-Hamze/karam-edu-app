@@ -143,7 +143,7 @@ class CourseDetailScreen extends GetView<CourseController> {
                   _buildInfoChip(
                     context,
                     icon: Icons.school_outlined,
-                    label: 'المستوى: ${course.yearLevel}',
+                    label: 'السنة الدراسية: ${course.yearLevel}',
                   ),
                   SizedBox(width: 8),
                   _buildInfoChip(

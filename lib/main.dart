@@ -10,6 +10,9 @@ import 'app/routes/app_pages.dart';
 import 'app/ui/theme/app_theme.dart';
 import 'app/services/storage_service.dart';
 import 'app/services/network_service.dart';
+import 'app/controllers/video_download_manager.dart';
+import 'app/data/providers/video_provider.dart';
+import 'app/data/repositories/video_repository.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -75,10 +78,56 @@ void main() async {
 Future<void> initServices() async {
   await Get.putAsync(() => StorageService().init());
   await Get.putAsync(() => NetworkService().init());
+  
+  // Register VideoProvider and VideoRepository permanently so VideoDownloadManager
+  // can be initialized early for lifecycle handling
+  Get.put(VideoProvider(), permanent: true);
+  Get.put(VideoRepository(videoProvider: Get.find<VideoProvider>()), permanent: true);
+  
+  // Register VideoDownloadManager as a permanent service so it's always available
+  // for lifecycle handling even when course screen is not open
+  Get.put(VideoDownloadManager(), permanent: true);
 }
 
 // Regular app
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    
+    // Get the download manager instance
+    if (Get.isRegistered<VideoDownloadManager>()) {
+      final downloadManager = Get.find<VideoDownloadManager>();
+      
+      if (state == AppLifecycleState.paused) {
+        // App went to background - pause active downloads
+        print('📱 App went to background - pausing active downloads');
+        downloadManager.handleAppPaused();
+      } else if (state == AppLifecycleState.resumed) {
+        // App returned to foreground - resume paused downloads
+        print('📱 App resumed - resuming paused downloads');
+        downloadManager.handleAppResumed();
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return GetMaterialApp(

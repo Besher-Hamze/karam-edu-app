@@ -719,8 +719,8 @@ class VideoListItem extends StatelessWidget {
             child: Text('إلغاء', style: TextStyle(color: Colors.grey[600])),
           ),
           ElevatedButton(
-            onPressed: () {
-              manager.deleteDownloadedVideo(video.id);
+            onPressed: () async {
+              await manager.deleteDownloadedVideo(video.id);
               Get.back();
               final context = Get.context;
               if (context != null) {
@@ -769,6 +769,12 @@ class VideoListItem extends StatelessWidget {
           ElevatedButton(
             onPressed: () {
               manager.cancelDownload(video.id);
+              manager.downloadStatus.remove(video.id);
+              manager.downloadProgress.remove(video.id);
+              manager.downloadedBytes.remove(video.id);
+              manager.totalBytes.remove(video.id);
+              manager.isPaused.remove(video.id);
+              manager.cancelTokens.remove(video.id);
               Get.back();
               final context = Get.context;
               if (context != null) {

@@ -33,6 +33,7 @@ class CourseBinding extends Bindings {
     Get.lazyPut<VideoController>(() => VideoController(
       videoRepository: Get.find<VideoRepository>(),
     ));
-    Get.lazyPut<VideoDownloadManager>(() => VideoDownloadManager());
+    // VideoDownloadManager is now registered permanently in main.dart
+    // No need to register it here again
   }
 }

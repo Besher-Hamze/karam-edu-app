@@ -33,76 +33,107 @@ class VideoDownloadManager extends GetxController {
 
   // Optional: Add a course ID to track downloads for a specific course
   String? _currentCourseId;
+  
+  // Track if app is in background
+  bool _isAppInBackground = false;
 
   @override
   void onInit() {
     super.onInit();
     // Initialize by checking existing downloads
     _initializeDownloadedVideos();
-    checkPreviousDownloads(); // Add this line
+    checkPreviousDownloads();
   }
-
-  Future<void> _restoreDownloadStates() async {
+  
+  // Handle app going to background
+  Future<void> handleAppPaused() async {
+    _isAppInBackground = true;
+    print('📱 App paused - handling active downloads');
+    
+    // Get all active downloads
+    final activeDownloads = <String>[];
+    downloadStatus.forEach((videoId, status) {
+      if (status == 'downloading') {
+        activeDownloads.add(videoId);
+      }
+    });
+    
+    // Pause all active downloads
+    for (String videoId in activeDownloads) {
+      print('⏸️ Pausing download due to app background: $videoId');
+      await pauseDownload(videoId);
+    }
+  }
+  
+  // Handle app resuming from background
+  Future<void> handleAppResumed() async {
+    if (!_isAppInBackground) {
+      return; // Already resumed or wasn't paused
+    }
+    
+    _isAppInBackground = false;
+    print('📱 App resumed - checking for paused downloads to resume');
+    
+    // Wait a bit for app to fully resume
+    await Future.delayed(Duration(milliseconds: 500));
+    
+    // Get all paused downloads
+    final pausedDownloads = <String>[];
+    downloadStatus.forEach((videoId, status) {
+      if (status == 'paused' && (isPaused[videoId] == true)) {
+        pausedDownloads.add(videoId);
+      }
+    });
+    
+    // Also check for downloads that were paused due to app going to background
+    // by checking partial download info
     try {
-      print('🔄 Restoring download states...');
-
-      // Get all videos that have partial download info
       final downloadedList = await _storageService.getDownloadedVideosList();
-
       for (String videoId in downloadedList) {
-        // Check if video is fully downloaded
-        final String? path = await _storageService.getVideoPath(videoId);
-        if (path != null && path.isNotEmpty) {
-          final File videoFile = File(path);
-          if (await videoFile.exists()) {
-            final fileSize = await videoFile.length();
-            if (fileSize > 0) {
-              // File exists and is downloadVideo
-              downloadedVideos[videoId] = true;
-              downloadedVideoFiles[videoId] = path;
-              downloadStatus[videoId] = 'completed';
-              downloadProgress[videoId] = 1.0;
-              print('✅ Restored completed download: $videoId');
-              continue;
+        final partialInfo = await _storageService.getPartialDownloadInfo(videoId);
+        if (partialInfo != null && !pausedDownloads.contains(videoId)) {
+          final path = await _storageService.getVideoPath(videoId);
+          if (path != null) {
+            final tempFile = File('$path.tmp');
+            if (await tempFile.exists()) {
+              // This is a paused download that wasn't in our status map
+              pausedDownloads.add(videoId);
+              // Restore its state
+              final actualBytes = await tempFile.length();
+              final savedTotal = partialInfo['totalBytes'] as int;
+              downloadedBytes[videoId] = actualBytes;
+              totalBytes[videoId] = savedTotal;
+              downloadStatus[videoId] = 'paused';
+              downloadProgress[videoId] = actualBytes / savedTotal;
+              isPaused[videoId] = true;
             }
           }
         }
-
-        // Check for partial downloads
-        final partialInfo =
-            await _storageService.getPartialDownloadInfo(videoId);
-        if (partialInfo != null) {
-          final tempPath = path != null ? '$path.tmp' : null;
-
-          if (tempPath != null && await File(tempPath).exists()) {
-            // Partial file exists
-            final actualSize = await File(tempPath).length();
-            final savedDownloadedBytes = partialInfo['downloadedBytes'] as int;
-            final savedTotalBytes = partialInfo['totalBytes'] as int;
-
-            // Use actual file size (more reliable)
-            downloadedBytes[videoId] = actualSize;
-            totalBytes[videoId] = savedTotalBytes;
-
-            final progress = actualSize / savedTotalBytes;
-            downloadProgress[videoId] = progress;
-            downloadStatus[videoId] = 'paused';
-            isPaused[videoId] = true;
-
-            print(
-                '📥 Restored paused download: $videoId (${(progress * 100).toStringAsFixed(1)}%)');
-          } else {
-            // Partial info exists but no temp file - clean up
-            await _storageService.removePartialDownloadInfo(videoId);
-            await _storageService.removeVideoFromDownloadedList(videoId);
-            print('🧹 Cleaned up invalid partial download: $videoId');
-          }
-        }
       }
-
-      print('✅ Download states restoration completed');
     } catch (e) {
-      print('❌ Error restoring download states: $e');
+      print('Error checking for paused downloads on resume: $e');
+    }
+    
+    // Resume all paused downloads
+    for (String videoId in pausedDownloads) {
+      // Check if download is already complete before resuming
+      final isDownloaded = await isVideoDownloaded(videoId);
+      if (isDownloaded) {
+        print('✅ Download already complete, skipping resume: $videoId');
+        downloadStatus[videoId] = 'completed';
+        downloadedVideos[videoId] = true;
+        isPaused.remove(videoId);
+        continue;
+      }
+      
+      print('▶️ Resuming download after app resume: $videoId');
+      // Use a small delay between resumes to avoid overwhelming the system
+      await Future.delayed(Duration(milliseconds: 300));
+      await resumeDownload(videoId);
+    }
+    
+    if (pausedDownloads.isNotEmpty) {
+      print('✅ Resumed ${pausedDownloads.length} paused download(s)');
     }
   }
 
@@ -110,7 +141,10 @@ class VideoDownloadManager extends GetxController {
     try {
       final downloadedList = await _storageService.getDownloadedVideosList();
 
-      for (String videoId in downloadedList) {
+      // CRITICAL: Create a copy of the list to avoid concurrent modification errors
+      final List<String> videoIds = List<String>.from(downloadedList);
+
+      for (String videoId in videoIds) {
         // Check if file still exists
         final String? path = await _storageService.getVideoPath(videoId);
         if (path != null && path.isNotEmpty) {
@@ -132,11 +166,17 @@ class VideoDownloadManager extends GetxController {
         if (partialInfo != null && !downloadedVideos.containsKey(videoId)) {
           final tempPath = path != null ? '$path.tmp' : null;
           if (tempPath != null && await File(tempPath).exists()) {
+            final actualBytes = await File(tempPath).length();
+            final savedTotal = partialInfo['totalBytes'] as int;
+            
+            // Restore accurate progress
+            downloadedBytes[videoId] = actualBytes;
+            totalBytes[videoId] = savedTotal;
             downloadStatus[videoId] = 'paused';
-            final progress =
-                partialInfo['downloadedBytes'] / partialInfo['totalBytes'];
-            downloadProgress[videoId] = progress;
+            downloadProgress[videoId] = actualBytes / savedTotal;
             isPaused[videoId] = true;
+            
+            print('📥 Restored paused download: $videoId (${(downloadProgress[videoId]! * 100).toStringAsFixed(1)}%)');
           }
         }
       }
@@ -152,7 +192,10 @@ class VideoDownloadManager extends GetxController {
       final downloadedList = await _storageService.getDownloadedVideosList();
 
       if (downloadedList.isNotEmpty) {
-        for (String videoId in downloadedList) {
+        // CRITICAL: Create a copy of the list to avoid concurrent modification errors
+        final List<String> videoIds = List<String>.from(downloadedList);
+        
+        for (String videoId in videoIds) {
           final String? path = await _storageService.getVideoPath(videoId);
           if (path != null && path.isNotEmpty) {
             final File videoFile = File(path);
@@ -251,15 +294,24 @@ class VideoDownloadManager extends GetxController {
 
       downloadStatus[video.id] = 'downloading';
       isPaused[video.id] = false;
-      downloadProgress[video.id] = 0.0;
-      downloadedBytes[video.id] = 0;
-      totalBytes[video.id] = 0;
+      
+      // Don't reset progress if resuming - keep existing values
+      if (!downloadedBytes.containsKey(video.id)) {
+        downloadProgress[video.id] = 0.0;
+        downloadedBytes[video.id] = 0;
+        totalBytes[video.id] = 0;
+      }
 
       final String? localPath = await _downloadService.downloadVideoPrivately(
         videoUrl: videoUrl,
         videoId: video.id,
+        cancelToken: cancelToken,
         onProgress: (received, total) {
-          if (isPaused[video.id] == true) return;
+          // Check cancellation immediately
+          if (cancelToken.isCancelled || isPaused[video.id] == true) {
+            print('⏸️ Progress callback skipped - download is paused');
+            return;
+          }
 
           // Validate progress data
           if (total <= 0 || received < 0 || received > total) {
@@ -281,7 +333,11 @@ class VideoDownloadManager extends GetxController {
         },
         onStatusChange: (status) {
           print('📱 Status change for ${video.id}: $status');
-          downloadStatus[video.id] = status;
+          
+          // Don't override paused status
+          if (downloadStatus[video.id] != 'paused') {
+            downloadStatus[video.id] = status;
+          }
 
           if (status == 'completed') {
             downloadedBytes.remove(video.id);
@@ -289,6 +345,12 @@ class VideoDownloadManager extends GetxController {
           }
         },
       );
+
+      // Check if it was paused during download
+      if (isPaused[video.id] == true) {
+        print('⏸️ Download was paused during execution');
+        return false;
+      }
 
       if (localPath != null) {
         downloadedVideoFiles[video.id] = localPath;
@@ -305,9 +367,9 @@ class VideoDownloadManager extends GetxController {
       }
       return false;
     } catch (e) {
-      print('❌ Download error for ${video.id}: $e');
-
-      if (e.toString().contains('cancel')) {
+      // Check if it's a cancellation first - don't log as error
+      if (e.toString().contains('cancel') || 
+          (e is DioException && e.type == DioExceptionType.cancel)) {
         downloadStatus[video.id] = 'paused';
         isPaused[video.id] = true;
 
@@ -323,6 +385,8 @@ class VideoDownloadManager extends GetxController {
         }
         print('⏸️ Download paused due to cancellation: ${video.id}');
       } else {
+        // Only log actual errors, not cancellations
+        print('❌ Download error for ${video.id}: $e');
         downloadStatus[video.id] = 'error';
 
         // Clear all tracking data on error
@@ -353,32 +417,6 @@ class VideoDownloadManager extends GetxController {
     }
   }
 
-
-  Future<void> _handleDownloadSuccess(String videoId, String filePath) async {
-    try {
-      // Update storage
-      await _storageService.saveVideoPath(videoId, filePath);
-      await _storageService.addVideoToDownloadedList(videoId);
-      await _storageService.removePartialDownloadInfo(videoId);
-
-      // Update download manager state
-      downloadedVideoFiles[videoId] = filePath;
-      downloadStatus[videoId] = 'completed';
-      downloadedVideos[videoId] = true;
-
-      // Clean up tracking data
-      downloadProgress.remove(videoId);
-      downloadedBytes.remove(videoId);
-      totalBytes.remove(videoId);
-      isPaused.remove(videoId);
-      cancelTokens.remove(videoId);
-
-      print('✅ Successfully handled download completion for: $videoId');
-    } catch (e) {
-      print('❌ Error handling download success: $e');
-    }
-  }
-
   Future<void> clearInvalidDownload(String videoId) async {
     try {
       print('🧹 Clearing invalid download for: $videoId');
@@ -403,7 +441,7 @@ class VideoDownloadManager extends GetxController {
         final finalFile = File(savedPath);
         if (await finalFile.exists()) {
           final size = await finalFile.length();
-          if (size <= 1024) { // File is too small, likely corrupted
+          if (size <= 1024) {
             try {
               await finalFile.delete();
               print('🗑️ Deleted corrupted final file: $savedPath');
@@ -431,6 +469,10 @@ class VideoDownloadManager extends GetxController {
   Future<void> pauseDownload(String videoId) async {
     try {
       print('⏸️ Attempting to pause download for: $videoId');
+      
+      // Set paused state FIRST
+      isPaused[videoId] = true;
+      downloadStatus[videoId] = 'paused';
 
       final cancelToken = cancelTokens[videoId];
       if (cancelToken != null && !cancelToken.isCancelled) {
@@ -438,31 +480,60 @@ class VideoDownloadManager extends GetxController {
         print('✅ Cancel token cancelled for: $videoId');
       }
 
-      // Update status immediately
-      downloadStatus[videoId] = 'paused';
-      isPaused[videoId] = true;
+      // Wait longer for download to actually stop and file writes to complete
+      await Future.delayed(Duration(milliseconds: 1000));
 
-      // Force save current progress with current download state
-      if (downloadedBytes.containsKey(videoId) &&
-          totalBytes.containsKey(videoId)) {
-        final currentDownloaded = downloadedBytes[videoId]!;
-        final currentTotal = totalBytes[videoId]!;
-
-        print(
-            '💾 Saving progress on pause: ${currentDownloaded / 1024 / 1024} MB / ${currentTotal / 1024 / 1024} MB');
-        await _storageService.savePartialDownloadInfo(
-            videoId, currentDownloaded, currentTotal);
-
-        // Also ensure the file path is saved
-        final currentPath = await _storageService.getVideoPath(videoId);
-        if (currentPath == null || currentPath.isEmpty) {
-          // Generate and save a consistent path
-          final videoDir = await _getVideoDirectory();
-          final filename = _generateSecureFilename();
-          final newPath = '${videoDir.path}/$filename';
-          await _storageService.saveVideoPath(videoId, newPath);
-          print('💾 Generated and saved new video path: $newPath');
+      // CRITICAL: Get actual file size instead of tracked bytes
+      // This ensures we save the real progress, accounting for any buffered writes
+      final currentPath = await _storageService.getVideoPath(videoId);
+      if (currentPath != null && currentPath.isNotEmpty) {
+        final tempFile = File('$currentPath.tmp');
+        if (await tempFile.exists()) {
+          try {
+            // Get actual file size after all writes are flushed
+            final actualFileSize = await tempFile.length();
+            final currentTotal = totalBytes[videoId] ?? 0;
+            
+            if (actualFileSize > 0 && currentTotal > 0) {
+              // Use actual file size as source of truth
+              await _storageService.savePartialDownloadInfo(
+                  videoId, actualFileSize, currentTotal);
+              print('💾 Saved actual file progress on pause: ${actualFileSize / 1024 / 1024} MB / ${currentTotal / 1024 / 1024} MB');
+              
+              // Update in-memory tracking to match actual file size
+              downloadedBytes[videoId] = actualFileSize;
+              downloadProgress[videoId] = actualFileSize / currentTotal;
+            }
+          } catch (e) {
+            print('⚠️ Error getting actual file size on pause: $e');
+            // Fallback to tracked bytes if we can't read file
+            if (downloadedBytes.containsKey(videoId) &&
+                totalBytes.containsKey(videoId) &&
+                totalBytes[videoId]! > 0) {
+              final currentDownloaded = downloadedBytes[videoId]!;
+              final currentTotal = totalBytes[videoId]!;
+              await _storageService.savePartialDownloadInfo(
+                  videoId, currentDownloaded, currentTotal);
+              print('💾 Saved tracked progress on pause (fallback): ${currentDownloaded / 1024 / 1024} MB / ${currentTotal / 1024 / 1024} MB');
+            }
+          }
+        } else if (downloadedBytes.containsKey(videoId) &&
+            totalBytes.containsKey(videoId) &&
+            totalBytes[videoId]! > 0) {
+          // No temp file yet, use tracked bytes
+          final currentDownloaded = downloadedBytes[videoId]!;
+          final currentTotal = totalBytes[videoId]!;
+          await _storageService.savePartialDownloadInfo(
+              videoId, currentDownloaded, currentTotal);
+          print('💾 Saved tracked progress on pause: ${currentDownloaded / 1024 / 1024} MB / ${currentTotal / 1024 / 1024} MB');
         }
+      } else {
+        // Generate and save a consistent path
+        final videoDir = await _getVideoDirectory();
+        final filename = _generateSecureFilename();
+        final newPath = '${videoDir.path}/$filename';
+        await _storageService.saveVideoPath(videoId, newPath);
+        print('💾 Generated and saved new video path: $newPath');
       }
 
       print('⏸️ Download paused successfully for: $videoId');
@@ -492,8 +563,29 @@ class VideoDownloadManager extends GetxController {
 
   Future<bool> resumeDownload(String videoId) async {
     try {
+      // CRITICAL: Check if download is already complete
+      final isDownloaded = await isVideoDownloaded(videoId);
+      if (isDownloaded) {
+        final localPath = await getLocalVideoPath(videoId);
+        if (localPath != null) {
+          final file = File(localPath);
+          if (await file.exists()) {
+            final size = await file.length();
+            if (size > 1024) {
+              print('✅ Video already downloaded, no need to resume: $videoId');
+              downloadStatus[videoId] = 'completed';
+              downloadedVideos[videoId] = true;
+              downloadedVideoFiles[videoId] = localPath;
+              downloadProgress[videoId] = 1.0;
+              isPaused.remove(videoId);
+              return true;
+            }
+          }
+        }
+      }
+
       if (downloadStatus[videoId] != 'paused') {
-        print('Cannot resume - video is not paused');
+        print('Cannot resume - video is not paused (status: ${downloadStatus[videoId]})');
         return false;
       }
 
@@ -505,6 +597,7 @@ class VideoDownloadManager extends GetxController {
       }
 
       print('▶️ Resuming download for video: $videoId');
+      print('📊 Current progress: ${downloadedBytes[videoId]} / ${totalBytes[videoId]} bytes');
 
       // Remove paused state but keep progress data
       isPaused.remove(videoId);
@@ -575,48 +668,49 @@ class VideoDownloadManager extends GetxController {
     return downloadStatus[videoId] ?? 'not_started';
   }
 
-// Add method to check if download is paused
   bool isDownloadPaused(String videoId) {
     return isPaused[videoId] ?? false;
   }
 
-  // When deleting a video, also remove from storage service
   Future<bool> deleteDownloadedVideo(String videoId) async {
     final bool deleted = await _downloadService.deletePrivateVideo(videoId);
     if (deleted) {
       downloadedVideos[videoId] = false;
       downloadedVideoFiles.remove(videoId);
+      
+      // Clear all download-related state to trigger UI update
+      downloadStatus.remove(videoId);
+      downloadProgress.remove(videoId);
+      downloadedBytes.remove(videoId);
+      totalBytes.remove(videoId);
+      isPaused.remove(videoId);
+      cancelTokens.remove(videoId);
 
-      // Also remove from storage service
       await _storageService.saveVideoPath(videoId, '');
       await _storageService.removeVideoFromDownloadedList(videoId);
+      await _storageService.removePartialDownloadInfo(videoId);
     }
     return deleted;
   }
 
-  // Check if a video is downloaded
   Future<bool> isVideoDownloaded(String videoId) async {
     return await _downloadService.isVideoDownloaded(videoId);
   }
 
-  // Get local path of a downloaded video
   Future<String?> getLocalVideoPath(String videoId) async {
     return await _downloadService.getPrivateVideoPath(videoId);
   }
 
-  // Get the local file path for a downloaded video
   String? getDownloadedVideoFile(String videoId) {
     return downloadedVideoFiles[videoId];
   }
 
-  // Batch download multiple videos
   Future<void> downloadVideos(List<Video> videos) async {
     for (var video in videos) {
       await downloadVideo(video);
     }
   }
 
-  // Download all videos for the current course
   Future<void> downloadAllCourseVideos() async {
     if (_currentCourseId == null) {
       print('No course selected for batch download');
