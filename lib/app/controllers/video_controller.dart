@@ -9,6 +9,7 @@ import 'package:video_player/video_player.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../services/storage_service.dart';
+import '../services/network_service.dart';
 import '../ui/global_widgets/snackbar.dart';
 
 class VideoController extends GetxController {
@@ -28,6 +29,7 @@ class VideoController extends GetxController {
   RxBool controlsVisible = true.obs;
   RxBool isOfflineMode = false.obs;
   final StorageService _storageService = Get.find<StorageService>();
+  final NetworkService _networkService = Get.find<NetworkService>();
   Timer? _hideControlsTimer;
   RxBool hasTriedOnlineFallback = false.obs;
 
@@ -120,6 +122,66 @@ class VideoController extends GetxController {
     }
   }
 
+  bool _isCachePath(String path) {
+    return path.contains('/cache/') || path.contains('\\cache\\');
+  }
+
+  String _extractFileName(String path) {
+    final segments = path.split(RegExp(r'[\\/]+'));
+    if (segments.isNotEmpty && segments.last.isNotEmpty) {
+      return segments.last;
+    }
+    return 'video_${DateTime.now().millisecondsSinceEpoch}.data';
+  }
+
+  Future<String?> _ensurePersistentLocalFile(String videoId, String? savedPath) async {
+    if (savedPath == null || savedPath.isEmpty) {
+      return savedPath;
+    }
+
+    if (!_isCachePath(savedPath)) {
+      return savedPath;
+    }
+
+    final cachedFile = File(savedPath);
+    if (!await cachedFile.exists()) {
+      return savedPath;
+    }
+
+    try {
+      final persistentDir = await _networkService.getPersistentVideoDirectory();
+      String targetPath = '${persistentDir.path}/${_extractFileName(savedPath)}';
+
+      if (targetPath == savedPath) {
+        return savedPath;
+      }
+
+      if (await File(targetPath).exists()) {
+        final timestamp = DateTime.now().millisecondsSinceEpoch;
+        targetPath = '${persistentDir.path}/${videoId}_$timestamp.data';
+      }
+
+      try {
+        await cachedFile.rename(targetPath);
+      } catch (e) {
+        await cachedFile.copy(targetPath);
+        await cachedFile.delete();
+      }
+
+      final tempFile = File('$savedPath.tmp');
+      if (await tempFile.exists()) {
+        await tempFile.delete();
+      }
+
+      await _storageService.saveVideoPath(videoId, targetPath);
+      print('♻️ Migrated cached video to persistent storage: $targetPath');
+      return targetPath;
+    } catch (e) {
+      print('Error migrating video file for $videoId: $e');
+      return savedPath;
+    }
+  }
+
   Future<void> loadVideo(String videoId) async {
     try {
       isLoading.value = true;
@@ -144,8 +206,10 @@ class VideoController extends GetxController {
 
       // التحقق من وجود الفيديو محلياً
       final isDownloaded = await _downloadManager.isVideoDownloaded(videoId);
-      final String? localFilePath = isDownloaded ?
-      await _downloadManager.getLocalVideoPath(videoId) : null;
+      String? localFilePath = isDownloaded
+          ? await _downloadManager.getLocalVideoPath(videoId)
+          : null;
+      localFilePath = await _ensurePersistentLocalFile(videoId, localFilePath);
 
       // CRITICAL: Check if download is currently in progress or paused
       final downloadStatus = _downloadManager.getDownloadStatusString(videoId);

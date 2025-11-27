@@ -1,6 +1,7 @@
 import 'package:course_platform/utils/constants.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:get/get.dart';
+import 'dart:collection';
 import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
@@ -20,6 +21,8 @@ class NetworkService extends GetxService {
   String? _deviceModel;
   int? _sdkVersion;
   bool? _isSamsungDevice;
+  Directory? _cachedVideoDirectory;
+  static const Duration _defaultCacheDuration = Duration(days: 7);
 
   Future<NetworkService> init() async {
     _dio = Dio(BaseOptions(
@@ -74,10 +77,48 @@ class NetworkService extends GetxService {
   }
 
   // GET Request
-  Future<p.Response> get(String path, {Map<String, dynamic>? queryParameters}) async {
+  Future<p.Response> get(
+    String path, {
+    Map<String, dynamic>? queryParameters,
+    bool useOfflineCache = true,
+    Duration? cacheDuration,
+    bool forceRefresh = false,
+  }) async {
+    final effectiveDuration = cacheDuration ?? _defaultCacheDuration;
+    final cacheKey = _buildCacheKey(path, queryParameters);
+
+    if (useOfflineCache && !forceRefresh) {
+      final hasInternet = await _hasInternetConnection();
+      if (!hasInternet) {
+        final cached = await _storageService.getHttpCache(cacheKey, maxAge: effectiveDuration);
+        if (cached != null) {
+          print('📡 Offline mode - serving cached response for $cacheKey');
+          return _buildCachedResponse(path, queryParameters, cached);
+        }
+        final offlineError = DioException(
+          requestOptions: RequestOptions(path: path, queryParameters: queryParameters ?? <String, dynamic>{}),
+          error: 'No internet connection',
+          type: DioExceptionType.connectionError,
+        );
+        _handleError(offlineError);
+        throw offlineError;
+      }
+    }
+
     try {
-      return await _dio.get(path, queryParameters: queryParameters);
+      final response = await _dio.get(path, queryParameters: queryParameters);
+      if (useOfflineCache && response.data != null) {
+        await _storageService.saveHttpCache(cacheKey, response.data);
+      }
+      return response;
     } on DioException catch (e) {
+      if (useOfflineCache && _isOfflineException(e)) {
+        final cached = await _storageService.getHttpCache(cacheKey, maxAge: effectiveDuration);
+        if (cached != null) {
+          print('📡 Network unavailable - using cached response for $cacheKey');
+          return _buildCachedResponse(path, queryParameters, cached);
+        }
+      }
       _handleError(e);
       rethrow;
     }
@@ -187,127 +228,148 @@ class NetworkService extends GetxService {
     return '$randomString-$timestamp$extension';
   }
 
-  // Find all available private storage directories that work on Samsung
-  Future<List<Directory>> _getAvailablePrivateDirectories() async {
-    final List<Directory> availableDirs = [];
-    final List<Directory?> potentialDirs = [];
-
+  Future<bool> _canWriteToDirectory(Directory dir) async {
+    final testFile = File('${dir.path}/.perm_check_${DateTime.now().microsecondsSinceEpoch}');
     try {
-      // App-specific directories that should always be available without permissions
-      potentialDirs.add(await getApplicationDocumentsDirectory());
-      potentialDirs.add(await getApplicationCacheDirectory());
-      potentialDirs.add(await getApplicationSupportDirectory());
-      potentialDirs.add(await getTemporaryDirectory());
-
-      // Test each directory
-      for (var dir in potentialDirs) {
-        if (dir == null) continue;
-
-        try {
-          // Check if directory exists and is writable
-          final testFile = File('${dir.path}/test_write.tmp');
-          await testFile.writeAsString('test');
-          await testFile.delete();
-
-          // If we get here, it's writable
-          availableDirs.add(dir);
-        } catch (e) {
-          print('Directory ${dir.path} is not writable: $e');
-        }
-      }
+      await testFile.create(recursive: true);
+      await testFile.writeAsString('ok');
+      await testFile.delete();
+      return true;
     } catch (e) {
-      print('Error finding available directories: $e');
+      print('Directory ${dir.path} is not writable: $e');
+      try {
+        if (await testFile.exists()) {
+          await testFile.delete();
+        }
+      } catch (_) {}
+      return false;
     }
-
-    return availableDirs;
   }
 
-  // Get best directory for storing videos on Samsung devices
+  Future<Directory?> _prepareVideoDirectory(Directory baseDir) async {
+    try {
+      final targetDir = Directory('${baseDir.path}/data_files');
+      if (!await targetDir.exists()) {
+        await targetDir.create(recursive: true);
+      }
+
+      final canWrite = await _canWriteToDirectory(targetDir);
+      if (canWrite) {
+        return targetDir;
+      }
+    } catch (e) {
+      print('Error preparing directory ${baseDir.path}: $e');
+    }
+    return null;
+  }
+
+  Future<Directory?> _getPersistentInternalDirectory() async {
+    final List<Future<Directory?>> probes = [];
+
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      probes.add(_prepareVideoDirectory(docs));
+    } catch (e) {
+      print('Unable to access documents directory: $e');
+    }
+
+    try {
+      final support = await getApplicationSupportDirectory();
+      probes.add(_prepareVideoDirectory(support));
+    } catch (e) {
+      print('Unable to access support directory: $e');
+    }
+
+    if (Platform.isAndroid) {
+      try {
+        final external = await getExternalStorageDirectory();
+        if (external != null) {
+          probes.add(_prepareVideoDirectory(external));
+        }
+      } catch (e) {
+        print('Unable to access external storage directory: $e');
+      }
+    }
+
+    for (final probe in probes) {
+      final dir = await probe;
+      if (dir != null) {
+        return dir;
+      }
+    }
+
+    return null;
+  }
+
+  Future<Directory?> _getFallbackCacheDirectory() async {
+    final List<Future<Directory?>> probes = [];
+
+    try {
+      final cache = await getApplicationCacheDirectory();
+      probes.add(_prepareVideoDirectory(cache));
+    } catch (e) {
+      print('Unable to access cache directory: $e');
+    }
+
+    try {
+      final temp = await getTemporaryDirectory();
+      probes.add(_prepareVideoDirectory(temp));
+    } catch (e) {
+      print('Unable to access temporary directory: $e');
+    }
+
+    for (final probe in probes) {
+      final dir = await probe;
+      if (dir != null) {
+        return dir;
+      }
+    }
+
+    return null;
+  }
+
+  Future<bool> _isDirectoryStillUsable(Directory dir) async {
+    if (!await dir.exists()) {
+      return false;
+    }
+    return await _canWriteToDirectory(dir);
+  }
+
+  // Get best directory for storing videos (favor persistent internal storage)
   Future<Directory?> _getBestVideoDirectory() async {
     try {
-      // Get all available directories
-      final availableDirs = await _getAvailablePrivateDirectories();
-
-      if (availableDirs.isEmpty) {
-        throw Exception('No writable directories found');
+      if (_cachedVideoDirectory != null &&
+          await _isDirectoryStillUsable(_cachedVideoDirectory!)) {
+        return _cachedVideoDirectory;
       }
 
-      // Sort directories by available space (largest first)
-      final dirWithSpace = <Directory, int>{};
-
-      for (var dir in availableDirs) {
-        try {
-          if (_isSamsungDevice! && dir.path.contains('cache')) {
-            // Skip cache directories for Samsung as they can be purged
-            continue;
-          }
-
-          // Create a videos subdirectory
-          final videosDir = Directory('${dir.path}/data_files');
-          if (!await videosDir.exists()) {
-            await videosDir.create(recursive: true);
-          }
-
-          // Check available space
-          final stat = await File('${videosDir.path}/space_check.tmp').writeAsString('test');
-          await stat.delete();
-
-          // Directory works, add it
-          dirWithSpace[videosDir] = await _getAvailableSpace(dir);
-        } catch (e) {
-          print('Error checking directory ${dir.path}: $e');
-        }
+      final persistentDir = await _getPersistentInternalDirectory();
+      if (persistentDir != null) {
+        _cachedVideoDirectory = persistentDir;
+        print('Selected persistent directory for videos: ${persistentDir.path}');
+        return persistentDir;
       }
 
-      if (dirWithSpace.isEmpty) {
-        throw Exception('No writable video directories found');
+      final fallbackDir = await _getFallbackCacheDirectory();
+      if (fallbackDir != null) {
+        _cachedVideoDirectory = fallbackDir;
+        print('Using fallback cache directory for videos: ${fallbackDir.path}');
+        return fallbackDir;
       }
 
-      // Return the directory with the most space
-      final bestDir = dirWithSpace.entries
-          .reduce((a, b) => a.value > b.value ? a : b)
-          .key;
-
-      print('Selected best directory for videos: ${bestDir.path}');
-      return bestDir;
+      throw Exception('No writable directories found');
     } catch (e) {
       print('Error finding best video directory: $e');
-
-      // Fallback to application documents directory
-      try {
-        final fallbackDir = await getApplicationDocumentsDirectory();
-        final videosDir = Directory('${fallbackDir.path}/data_files');
-        if (!await videosDir.exists()) {
-          await videosDir.create(recursive: true);
-        }
-        return videosDir;
-      } catch (e2) {
-        print('Error creating fallback directory: $e2');
-        return null;
-      }
+      return null;
     }
   }
 
-  // Get available space in a directory (estimated)
-  Future<int> _getAvailableSpace(Directory directory) async {
-    try {
-      // Try to create a 1MB file to test space
-      final testFile = File('${directory.path}/space_test.tmp');
-
-      // Create a buffer with 1MB
-      final buffer = List<int>.filled(1024 * 1024, 0);
-      await testFile.writeAsBytes(buffer);
-
-      // Get file size to confirm
-      final size = await testFile.length();
-      await testFile.delete();
-
-      // Directory has at least 1MB available
-      return size;
-    } catch (e) {
-      print('Error checking available space: $e');
-      return 0;
+  Future<Directory> getPersistentVideoDirectory() async {
+    final dir = await _getBestVideoDirectory();
+    if (dir == null) {
+      throw Exception('Unable to resolve persistent video directory');
     }
+    return dir;
   }
 
   Future<String?> downloadVideoPrivately({
@@ -336,11 +398,7 @@ class NetworkService extends GetxService {
         filePath = existingPath;
         print('📁 Using existing path: $filePath');
       } else {
-        final videoDir = await _getBestVideoDirectory();
-        if (videoDir == null) {
-          print('Error: No suitable directory found for storing videos');
-          return null;
-        }
+        final videoDir = await getPersistentVideoDirectory();
 
         final secureFilename = _generateSecureFilename();
         filePath = '${videoDir.path}/$secureFilename';
@@ -1195,5 +1253,51 @@ class NetworkService extends GetxService {
 
   String getVideoStreamUrl(String videoId, {bool download = false}) {
     return '$baseUrl/videos/stream/$videoId${download ? '?download=true' : ''}';
+  }
+
+  String _buildCacheKey(String path, Map<String, dynamic>? queryParameters) {
+    final buffer = StringBuffer(path);
+    if (queryParameters != null && queryParameters.isNotEmpty) {
+      final sorted = SplayTreeMap<String, dynamic>.from(queryParameters);
+      buffer.write('?');
+      buffer.write(sorted.entries
+          .map((entry) => '${entry.key}=${Uri.encodeComponent(entry.value?.toString() ?? '')}')
+          .join('&'));
+    }
+    return buffer.toString();
+  }
+
+  bool _isOfflineException(DioException e) {
+    if (e.type == DioExceptionType.connectionTimeout ||
+        e.type == DioExceptionType.connectionError) {
+      return true;
+    }
+    if (e.type == DioExceptionType.unknown && e.error is SocketException) {
+      return true;
+    }
+    return false;
+  }
+
+  p.Response _buildCachedResponse(
+      String path, Map<String, dynamic>? queryParameters, dynamic data) {
+    return p.Response(
+      data: data,
+      statusCode: 200,
+      statusMessage: 'OK (cached)',
+      requestOptions: RequestOptions(
+        path: path,
+        queryParameters: queryParameters ?? <String, dynamic>{},
+      ),
+      extra: {'fromCache': true},
+    );
+  }
+
+  Future<bool> _hasInternetConnection() async {
+    try {
+      final result = await InternetAddress.lookup('example.com');
+      return result.isNotEmpty && result.first.rawAddress.isNotEmpty;
+    } on SocketException catch (_) {
+      return false;
+    }
   }
 }

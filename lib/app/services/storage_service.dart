@@ -50,12 +50,12 @@ class StorageService extends GetxService {
   Future<void> clearAllData() async {
     await _box.erase();
   }
-  Future<void> saveCourseVideos(String courseId, List<Map<String, dynamic>> videos) async {
+  Future<void> saveCourseVideos(
+      String courseId, List<Map<String, dynamic>> videos) async {
     await GetStorage().write('course_videos_$courseId', videos);
   }
 
-// Get course videos from local storage
-  Future<List<Map<String, dynamic>>?> getCourseVideos(String courseId) async {
+  Future<dynamic> getCourseVideos(String courseId) async {
     return await GetStorage().read('course_videos_$courseId');
   }
 
@@ -210,4 +210,35 @@ class StorageService extends GetxService {
     return watchedList.contains(videoId);
   }
 
+  Future<void> saveHttpCache(String key, dynamic data) async {
+    await _box.write('http_cache_$key', {
+      'timestamp': DateTime.now().millisecondsSinceEpoch,
+      'data': data,
+    });
+  }
+
+  Future<dynamic> getHttpCache(String key, {Duration? maxAge}) async {
+    final entry = _box.read('http_cache_$key');
+    if (entry == null) {
+      return null;
+    }
+
+    if (entry is Map && entry.containsKey('timestamp')) {
+      final ts = entry['timestamp'] as int? ?? 0;
+      if (maxAge != null) {
+        final age = DateTime.now().millisecondsSinceEpoch - ts;
+        if (age > maxAge.inMilliseconds) {
+          await _box.remove('http_cache_$key');
+          return null;
+        }
+      }
+      return entry['data'];
+    }
+
+    return entry;
+  }
+
+  Future<void> removeHttpCache(String key) async {
+    await _box.remove('http_cache_$key');
+  }
 }

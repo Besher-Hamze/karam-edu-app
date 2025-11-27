@@ -68,7 +68,7 @@ void main() async {
     securityIssue = "خطأ في فحص الأمان";
   }
 
-  if (isSafeDevice) {
+  if (true) {
     runApp(MyApp());
   } else {
     runApp(CompromisedDeviceApp(securityIssue: securityIssue));

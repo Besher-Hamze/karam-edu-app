@@ -3,7 +3,6 @@ import 'dart:math';
 import 'package:course_platform/app/controllers/permission_manager.dart';
 import 'package:dio/dio.dart';
 import 'package:get/get.dart';
-import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import '../data/models/video.dart';
 import '../data/repositories/video_repository.dart';
@@ -543,8 +542,7 @@ class VideoDownloadManager extends GetxController {
   }
 
   Future<Directory> _getVideoDirectory() async {
-    final appDir = await getApplicationDocumentsDirectory();
-    final videoDir = Directory('${appDir.path}/videos');
+    final videoDir = await _downloadService.getPersistentVideoDirectory();
     if (!await videoDir.exists()) {
       await videoDir.create(recursive: true);
     }

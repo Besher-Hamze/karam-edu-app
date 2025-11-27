@@ -114,14 +114,33 @@ class VideoRepository {
 
   // Cache methods for video lists
   Future<void> _saveVideosToLocalCache(String courseId, List<Video> videos) async {
-    await _storageService.saveCourseVideos(courseId, videos.map((v) => v.toJson()).toList());
+    await _storageService.saveCourseVideos(
+      courseId,
+      videos.map((v) => v.toJson()).toList(),
+    );
   }
 
   Future<List<Video>> _getVideosFromLocalCache(String courseId) async {
-    final cachedData = await _storageService.getCourseVideos(courseId);
-    if (cachedData != null) {
-      return (cachedData as List).map((item) => Video.fromJson(item)).toList();
+    final dynamic cachedData = await _storageService.getCourseVideos(courseId);
+    if (cachedData == null) {
+      return [];
     }
+
+    if (cachedData is List) {
+      return cachedData.map((item) => Video.fromJson(item)).toList();
+    }
+
+    if (cachedData is List<Map<String, dynamic>>) {
+      return cachedData.map((item) => Video.fromJson(item)).toList();
+    }
+
+    // Handle legacy storage format where data was nested in a map
+    if (cachedData is Map<String, dynamic> && cachedData['videos'] is List) {
+      final legacyList = cachedData['videos'] as List;
+      return legacyList.map((item) => Video.fromJson(item)).toList();
+    }
+
+    print('⚠️ Unexpected cached data type for course $courseId: ${cachedData.runtimeType}');
     return [];
   }
 
