@@ -36,6 +36,10 @@ class VideoDownloadManager extends GetxController {
   // Track if app is in background
   bool _isAppInBackground = false;
 
+  /// Only one active [downloadVideo] per video id. Prevents double taps / parallel
+  /// triggers from starting two HTTP downloads and corrupting progress for the same file.
+  final Map<String, Future<bool>> _ongoingDownloads = {};
+
   @override
   void onInit() {
     super.onInit();
@@ -244,12 +248,20 @@ class VideoDownloadManager extends GetxController {
     }
   }
 
-  // Download a single video
-  Future<bool> downloadVideo(Video video) async {
+  /// Download a single video. Concurrent calls for the same video share one download.
+  Future<bool> downloadVideo(Video video) {
+    final id = video.id;
+    return _ongoingDownloads.putIfAbsent(id, () {
+      final future = _downloadVideoImpl(video);
+      return future.whenComplete(() => _ongoingDownloads.remove(id));
+    });
+  }
+
+  Future<bool> _downloadVideoImpl(Video video) async {
     final hasPermission = await PermissionManager.requestStoragePermission();
     if (!hasPermission) return false;
 
-    // Check if already downloading
+    // Check if already downloading (in-memory state; may be set before HTTP starts)
     if (downloadStatus[video.id] == 'downloading') {
       print('Video ${video.id} is already downloading');
       return false;

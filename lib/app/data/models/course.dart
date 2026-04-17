@@ -1,4 +1,6 @@
 class Course {
+  static const String defaultTeacherName = 'كرم غريب';
+
   final String id;
   final String name;
   final String description;
@@ -7,6 +9,8 @@ class Course {
   final DateTime? createdAt;
   final DateTime? updatedAt;
   final bool? isAvailable;
+  /// May be omitted by the API; use [displayTeacherName] for UI.
+  final String? teacherName;
 
   Course(
       {required this.id,
@@ -16,7 +20,15 @@ class Course {
       required this.semester,
       this.createdAt,
       this.updatedAt,
-      this.isAvailable});
+      this.isAvailable,
+      this.teacherName});
+
+  /// Teacher label for UI: [teacherName] when non-empty, otherwise [defaultTeacherName].
+  String get displayTeacherName {
+    final t = teacherName?.trim();
+    if (t == null || t.isEmpty) return defaultTeacherName;
+    return t;
+  }
 
   factory Course.fromJson(Map<String, dynamic> json) {
     return Course(
@@ -30,7 +42,15 @@ class Course {
       updatedAt:
           json['updatedAt'] != null ? DateTime.parse(json['updatedAt']) : null,
       isAvailable: json['isAvailable'] != null ? json['isAvailable'] : false,
+      teacherName: _parseOptionalString(
+          json['teacherName']),
     );
+  }
+
+  static String? _parseOptionalString(dynamic value) {
+    if (value == null) return null;
+    if (value is String) return value;
+    return value.toString();
   }
   Map<String, dynamic> toJson() {
     return {
@@ -42,6 +62,7 @@ class Course {
       'createdAt': createdAt?.toIso8601String(),
       'updatedAt': updatedAt?.toIso8601String(),
       'isAvailable': isAvailable ?? false,
+      if (teacherName != null) 'teacherName': teacherName,
     };
   }
 }

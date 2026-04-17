@@ -172,17 +172,23 @@ class CourseCard extends StatelessWidget {
   }
 
   Widget _buildMetadata(BuildContext context, bool isDarkMode) {
-    return Row(
+    return Wrap(
+      spacing: 12,
+      runSpacing: 8,
       children: [
         _buildMetadataChip(
           icon: Icons.calendar_month_outlined,
-          label: 'الفصل: ${course.semester.toString()}' , 
+          label: 'الفصل: ${course.semester}',
           isDarkMode: isDarkMode,
         ),
-        SizedBox(width: 12),
         _buildMetadataChip(
           icon: Icons.school_outlined,
-          label: 'السنة: ${course.yearLevel.toString()}',
+          label: 'السنة: ${course.yearLevel}',
+          isDarkMode: isDarkMode,
+        ),
+        _buildMetadataChip(
+          icon: Icons.person_outline,
+          label: course.displayTeacherName,
           isDarkMode: isDarkMode,
         ),
       ],

@@ -137,19 +137,25 @@ class CourseDetailScreen extends GetView<CourseController> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Course level and semester info
-              Row(
+              // Course level, semester, teacher
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
                 children: [
                   _buildInfoChip(
                     context,
                     icon: Icons.school_outlined,
                     label: 'السنة الدراسية: ${course.yearLevel}',
                   ),
-                  SizedBox(width: 8),
                   _buildInfoChip(
                     context,
                     icon: Icons.calendar_today_outlined,
                     label: 'الفصل: ${course.semester}',
+                  ),
+                  _buildInfoChip(
+                    context,
+                    icon: Icons.person_outline,
+                    label: 'المعلم: ${course.displayTeacherName}',
                   ),
                 ],
               ),

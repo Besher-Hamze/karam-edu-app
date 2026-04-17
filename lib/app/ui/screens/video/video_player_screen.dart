@@ -42,7 +42,7 @@ class VideoPlayerScreen extends GetView<VideoController> {
             return _buildBufferingState();
           }
 
-          return _buildVideoPlayer();
+          return _buildVideoPlayer(context);
         }),
       ),
     );
@@ -98,7 +98,7 @@ class VideoPlayerScreen extends GetView<VideoController> {
     );
   }
 
-  Widget _buildVideoPlayer() {
+  Widget _buildVideoPlayer(BuildContext context) {
     return Obx(() =>
         InteractiveViewer(
           maxScale: 4.0,
@@ -298,56 +298,7 @@ class VideoPlayerScreen extends GetView<VideoController> {
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Builder(
-                                builder: (_) {
-                                  final videoController = controller.betterPlayerController.value
-                                      ?.videoPlayerController;
-                                  final videoValue = videoController?.value;
-                                  final position = videoValue?.position ?? Duration.zero;
-                                  final totalDuration = videoValue?.duration ?? Duration.zero;
-
-                                  return Row(
-                                children: [
-                                  // Current time
-                                  Text(
-                                    _formatDuration(position),
-                                    style: TextStyle(color: Colors.white),
-                                  ),
-
-                                  SizedBox(width: 8),
-
-                                  // Progress slider
-                                  Expanded(
-                                    child: SliderTheme(
-                                      data: SliderThemeData(
-                                        thumbShape: RoundSliderThumbShape(enabledThumbRadius: 6),
-                                        trackHeight: 4,
-                                        activeTrackColor: ColorTheme.primary,
-                                        inactiveTrackColor: Colors.white30,
-                                        thumbColor: ColorTheme.primary,
-                                      ),
-                                      child: Slider(
-                                        value: controller.videoProgress.value,
-                                        onChanged: (value) {
-                                          controller.seekToProgress(value);
-                                        },
-                                      ),
-                                    ),
-                                  ),
-
-                                  SizedBox(width: 8),
-
-                                  // Total duration
-                                  Text(
-                                    _formatDuration(totalDuration),
-                                    style: TextStyle(color: Colors.white),
-                                  ),
-
-                                  SizedBox(width: MediaQuery.of(Get.context!).padding.right + 8),
-                                ],
-                                  );
-                                },
-                              ),
+                              _buildVideoProgressBar(context),
 
                               // Speed buttons
                               SizedBox(height: 8),
@@ -382,6 +333,59 @@ class VideoPlayerScreen extends GetView<VideoController> {
           ),
         ),
     );
+  }
+
+  /// Isolated [Obx] so [videoProgress] updates repaint only this row — not [BetterPlayer] / [InteractiveViewer].
+  /// The outer [Obx] must not read [videoProgress], or full-tree rebuilds can prevent the slider from updating.
+  Widget _buildVideoProgressBar(BuildContext context) {
+    return Obx(() {
+      final vpc = controller.betterPlayerController.value?.videoPlayerController;
+      final duration = vpc?.value.duration ?? Duration.zero;
+
+      final raw = controller.videoProgress.value;
+      final progress = raw.isNaN || raw.isInfinite ? 0.0 : raw.clamp(0.0, 1.0);
+
+      final position = duration.inMilliseconds > 0
+          ? Duration(
+              milliseconds: (progress * duration.inMilliseconds).round(),
+            )
+          : Duration.zero;
+
+      final rightPad = MediaQuery.paddingOf(context).right + 8;
+
+      return Row(
+        children: [
+          Text(
+            _formatDuration(position),
+            style: TextStyle(color: Colors.white),
+          ),
+          SizedBox(width: 8),
+          Expanded(
+            child: SliderTheme(
+              data: SliderThemeData(
+                thumbShape: RoundSliderThumbShape(enabledThumbRadius: 6),
+                trackHeight: 4,
+                activeTrackColor: ColorTheme.primary,
+                inactiveTrackColor: Colors.white30,
+                thumbColor: ColorTheme.primary,
+              ),
+              child: Slider(
+                value: progress,
+                onChanged: (value) {
+                  controller.seekToProgress(value);
+                },
+              ),
+            ),
+          ),
+          SizedBox(width: 8),
+          Text(
+            _formatDuration(duration),
+            style: TextStyle(color: Colors.white),
+          ),
+          SizedBox(width: rightPad),
+        ],
+      );
+    });
   }
 
   Widget _buildSpeedButton(double speed) {
