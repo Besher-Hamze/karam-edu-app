@@ -3,9 +3,10 @@ import 'dart:io';
 import 'package:course_platform/app/controllers/video_download_manager.dart';
 import 'package:course_platform/app/data/models/video.dart';
 import 'package:course_platform/app/data/repositories/video_repository.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
-import 'package:video_player/video_player.dart';
+import 'package:better_player_plus/better_player_plus.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../services/storage_service.dart';
@@ -14,13 +15,15 @@ import '../ui/global_widgets/snackbar.dart';
 
 class VideoController extends GetxController {
   final VideoRepository _videoRepository;
-  final VideoDownloadManager _downloadManager = Get.find<VideoDownloadManager>();
+  final VideoDownloadManager _downloadManager =
+      Get.find<VideoDownloadManager>();
 
   VideoController({required VideoRepository videoRepository})
       : _videoRepository = videoRepository;
 
   Rx<Video?> currentVideo = Rx<Video?>(null);
-  Rx<VideoPlayerController?> videoPlayerController = Rx<VideoPlayerController?>(null);
+  Rx<BetterPlayerController?> betterPlayerController =
+      Rx<BetterPlayerController?>(null);
   RxBool isVideoInitialized = false.obs;
   RxBool isPlaying = false.obs;
   RxBool isLoading = true.obs;
@@ -33,11 +36,9 @@ class VideoController extends GetxController {
   Timer? _hideControlsTimer;
   RxBool hasTriedOnlineFallback = false.obs;
 
-  // إضافة متغير لتتبع سرعة التشغيل
   RxDouble playbackSpeed = 1.0.obs;
-
-  // إضافة متغير لتتبع الملف المحلي الحالي
   String? _currentLocalFilePath;
+  StreamSubscription? _playerEventSubscription;
 
   @override
   void onInit() {
@@ -47,7 +48,6 @@ class VideoController extends GetxController {
       loadVideo(videoId);
     }
 
-    // Hide system UI (navigation and status bars)
     _setFullScreen(true);
 
     SystemChannels.lifecycle.setMessageHandler((message) {
@@ -63,58 +63,49 @@ class VideoController extends GetxController {
     });
   }
 
-  // Set full screen mode
   void _setFullScreen(bool enabled) {
     if (enabled) {
       SystemChrome.setEnabledSystemUIMode(
         SystemUiMode.immersiveSticky,
-        overlays: [], // Hide both status bar and navigation bar
+        overlays: [],
       );
     } else {
       SystemChrome.setEnabledSystemUIMode(
         SystemUiMode.manual,
-        overlays: SystemUiOverlay.values, // Show all system UI
+        overlays: SystemUiOverlay.values,
       );
     }
   }
 
-  // التحقق من صلاحية ملف الفيديو المحلي
   Future<bool> _isValidVideoFile(String filePath) async {
     try {
       final file = File(filePath);
 
-      // التحقق من وجود الملف
       if (!await file.exists()) {
         print('❌ Video file does not exist: $filePath');
         return false;
       }
 
-      // CRITICAL: Check if this is a temp file (should not play temp files)
       if (filePath.endsWith('.tmp')) {
         print('❌ Cannot play temp file: $filePath');
         return false;
       }
 
-      // CRITICAL: Check if file is currently being downloaded
-      // Get the video ID from the file path or check download status
-      // We'll check this in loadVideo instead to have access to videoId
-
-      // التحقق من حجم الملف (يجب أن يكون أكبر من الحد الأدنى)
       final fileSize = await file.length();
-      if (fileSize < 1024 * 10) { // أقل من 10 كيلوبايت يعتبر غير صالح
+      if (fileSize < 1024 * 10) {
         print('❌ Video file too small: ${fileSize} bytes');
         return false;
       }
 
-      // CRITICAL: Check if there's a corresponding .tmp file (download in progress)
       final tempFile = File('$filePath.tmp');
       if (await tempFile.exists()) {
-        print('⚠️ Temp file exists - download may be in progress: $filePath.tmp');
-        // Don't consider it valid if temp file exists (download not complete)
+        print(
+            '⚠️ Temp file exists - download may be in progress: $filePath.tmp');
         return false;
       }
 
-      print('✅ Video file validation passed: $filePath (${fileSize / 1024 / 1024} MB)');
+      print(
+          '✅ Video file validation passed: $filePath (${fileSize / 1024 / 1024} MB)');
       return true;
     } catch (e) {
       print('Error validating video file: $e');
@@ -134,7 +125,8 @@ class VideoController extends GetxController {
     return 'video_${DateTime.now().millisecondsSinceEpoch}.data';
   }
 
-  Future<String?> _ensurePersistentLocalFile(String videoId, String? savedPath) async {
+  Future<String?> _ensurePersistentLocalFile(
+      String videoId, String? savedPath) async {
     if (savedPath == null || savedPath.isEmpty) {
       return savedPath;
     }
@@ -150,7 +142,8 @@ class VideoController extends GetxController {
 
     try {
       final persistentDir = await _networkService.getPersistentVideoDirectory();
-      String targetPath = '${persistentDir.path}/${_extractFileName(savedPath)}';
+      String targetPath =
+          '${persistentDir.path}/${_extractFileName(savedPath)}';
 
       if (targetPath == savedPath) {
         return savedPath;
@@ -187,13 +180,11 @@ class VideoController extends GetxController {
       isLoading.value = true;
       isVideoInitialized.value = false;
       hasTriedOnlineFallback.value = false;
-      _currentLocalFilePath = null; // إعادة تعيين مسار الملف المحلي
-      _videoMarkedAsWatched = false; // Reset watched flag for new video
+      _currentLocalFilePath = null;
+      _videoMarkedAsWatched = false;
 
-      // إعادة تعيين سرعة التشغيل إلى الوضع الطبيعي عند تحميل فيديو جديد
       playbackSpeed.value = 1.0;
 
-      // الحصول على تفاصيل الفيديو
       final video = await _videoRepository.getVideoDetails(videoId);
       currentVideo.value = video;
 
@@ -201,23 +192,21 @@ class VideoController extends GetxController {
         throw Exception('فشل في الحصول على تفاصيل الفيديو');
       }
 
-      // التحقق من وجود اتصال بالإنترنت أولاً
       final hasInternet = await _hasInternetConnection();
 
-      // التحقق من وجود الفيديو محلياً
       final isDownloaded = await _downloadManager.isVideoDownloaded(videoId);
       String? localFilePath = isDownloaded
           ? await _downloadManager.getLocalVideoPath(videoId)
           : null;
       localFilePath = await _ensurePersistentLocalFile(videoId, localFilePath);
 
-      // CRITICAL: Check if download is currently in progress or paused
       final downloadStatus = _downloadManager.getDownloadStatusString(videoId);
-      final isDownloading = downloadStatus == 'downloading' || downloadStatus == 'paused';
-      
+      final isDownloading =
+          downloadStatus == 'downloading' || downloadStatus == 'paused';
+
       if (isDownloading) {
-        print('⚠️ Video is currently downloading or paused, cannot play local file yet');
-        // If downloading, use online playback instead
+        print(
+            '⚠️ Video is currently downloading or paused, cannot play local file yet');
         if (hasInternet) {
           final String? streamUrl = await _videoRepository.getVideoUrl(videoId);
           if (streamUrl != null) {
@@ -229,22 +218,19 @@ class VideoController extends GetxController {
         }
       }
 
-      // التحقق من صلاحية الملف المحلي
-      final bool isValidLocalFile = localFilePath != null &&
-          await _isValidVideoFile(localFilePath);
+      final bool isValidLocalFile =
+          localFilePath != null && await _isValidVideoFile(localFilePath);
 
       if (isValidLocalFile) {
         print("Loading offline video from: $localFilePath");
-        _currentLocalFilePath = localFilePath; // حفظ مسار الملف المحلي
-        final initSuccess = await initializeVideoPlayer(localFilePath, isOffline: true);
+        _currentLocalFilePath = localFilePath;
+        final initSuccess =
+            await initializeVideoPlayer(localFilePath, isOffline: true);
 
-        // إذا فشل تشغيل الفيديو محلياً وكان هناك اتصال بالإنترنت، جرب التشغيل عبر الإنترنت
         if (!initSuccess && hasInternet) {
           print("Offline playback failed, switching to online mode");
-          // حذف الفيديو المحلي التالف
           await _handleCorruptedLocalFile(videoId, localFilePath);
 
-          // Get direct video URL from backend
           final String? streamUrl = await _videoRepository.getVideoUrl(videoId);
           if (streamUrl != null) {
             await initializeVideoPlayer(streamUrl, isOffline: false);
@@ -252,13 +238,10 @@ class VideoController extends GetxController {
             throw Exception('فشل الحصول على رابط الفيديو من الخادم');
           }
         } else if (!initSuccess && !hasInternet) {
-          // إذا فشل التشغيل المحلي ولا يوجد اتصال بالإنترنت، حذف الملف التالف أيضًا
           await _handleCorruptedLocalFile(videoId, localFilePath);
           throw Exception('فشل تشغيل الفيديو المحلي ولا يوجد اتصال بالإنترنت');
         }
       } else if (hasInternet) {
-        // لا يوجد نسخة محلية صالحة ولكن يوجد اتصال بالإنترنت
-        // Get direct video URL from backend
         final String? streamUrl = await _videoRepository.getVideoUrl(videoId);
         if (streamUrl != null) {
           print("Using streaming URL: $streamUrl");
@@ -267,25 +250,26 @@ class VideoController extends GetxController {
           throw Exception('فشل الحصول على رابط الفيديو من الخادم');
         }
 
-        // إذا كان الفيديو في قائمة التنزيلات ولكن غير صالح، قم بإزالته
         if (isDownloaded && localFilePath != null && !isValidLocalFile) {
           print("Removing invalid local file: $localFilePath");
           await _downloadManager.deleteDownloadedVideo(videoId);
         }
       } else {
-        // لا يوجد نسخة محلية صالحة ولا يوجد اتصال بالإنترنت
-        throw Exception('لا يوجد اتصال بالإنترنت والفيديو غير متوفر للمشاهدة دون اتصال');
+        throw Exception(
+            'لا يوجد اتصال بالإنترنت والفيديو غير متوفر للمشاهدة دون اتصال');
       }
 
       _startHideControlsTimer();
     } catch (e) {
       print('Error loading video: $e');
 
-      // محاولة التشغيل عبر الإنترنت كخيار أخير إذا لم نجرب بعد ويوجد اتصال بالإنترنت
-      if (!hasTriedOnlineFallback.value && currentVideo.value != null && await _hasInternetConnection()) {
+      if (!hasTriedOnlineFallback.value &&
+          currentVideo.value != null &&
+          await _hasInternetConnection()) {
         hasTriedOnlineFallback.value = true;
         print("Trying online fallback as last resort");
-        final String? streamUrl = await _videoRepository.getVideoUrl(currentVideo.value!.id);
+        final String? streamUrl =
+            await _videoRepository.getVideoUrl(currentVideo.value!.id);
         if (streamUrl != null) {
           await initializeVideoPlayer(streamUrl, isOffline: false);
         }
@@ -294,7 +278,8 @@ class VideoController extends GetxController {
         if (context != null) {
           ShamraSnackBar.show(
             context: context,
-            message: 'خطأ: فشل تحميل الفيديو. تأكد من اتصالك بالإنترنت أو قم بتنزيل الفيديو للمشاهدة دون اتصال.',
+            message:
+                'خطأ: فشل تحميل الفيديو. تأكد من اتصالك بالإنترنت أو قم بتنزيل الفيديو للمشاهدة دون اتصال.',
             type: SnackBarType.error,
             duration: Duration(seconds: 5),
           );
@@ -305,27 +290,25 @@ class VideoController extends GetxController {
     }
   }
 
-  // دالة جديدة للتعامل مع ملفات الفيديو المحلية التالفة
-  Future<void> _handleCorruptedLocalFile(String videoId, String filePath) async {
+  Future<void> _handleCorruptedLocalFile(
+      String videoId, String filePath) async {
     try {
       print("Handling corrupted local file: $filePath");
-      // حذف الملف من نظام الملفات
       final file = File(filePath);
       if (await file.exists()) {
         await file.delete();
         print("Deleted corrupted file from filesystem: $filePath");
       }
 
-      // حذف الفيديو من قائمة التنزيلات
       await _downloadManager.deleteDownloadedVideo(videoId);
       print("Removed video from downloads list: $videoId");
 
-      // عرض رسالة للمستخدم
       final context = Get.context;
       if (context != null) {
         ShamraSnackBar.show(
           context: context,
-          message: 'ملف تالف: تم اكتشاف مشكلة في الفيديو المحمل وتم حذفه. يمكنك إعادة تحميله لاحقاً.',
+          message:
+              'ملف تالف: تم اكتشاف مشكلة في الفيديو المحمل وتم حذفه. يمكنك إعادة تحميله لاحقاً.',
           type: SnackBarType.warning,
           duration: Duration(seconds: 3),
         );
@@ -335,7 +318,6 @@ class VideoController extends GetxController {
     }
   }
 
-  // Helper method to check internet connectivity
   Future<bool> _hasInternetConnection() async {
     try {
       final result = await InternetAddress.lookup('google.com');
@@ -345,127 +327,201 @@ class VideoController extends GetxController {
     }
   }
 
-  Future<bool> initializeVideoPlayer(String videoPath, {bool isOffline = false}) async {
+  Future<bool> initializeVideoPlayer(String videoPath,
+      {bool isOffline = false}) async {
     // Dispose previous controller if exists
-    if (videoPlayerController.value != null) {
-      await videoPlayerController.value!.dispose();
-      videoPlayerController.value = null;
+    if (betterPlayerController.value != null) {
+      await _playerEventSubscription?.cancel();
+      _playerEventSubscription = null;
+      betterPlayerController.value!.dispose();
+      betterPlayerController.value = null;
     }
 
     try {
+      BetterPlayerDataSource dataSource;
+
       if (isOffline) {
-        videoPlayerController.value = VideoPlayerController.file(File(videoPath));
+        dataSource = BetterPlayerDataSource(
+          BetterPlayerDataSourceType.file,
+          videoPath,
+          cacheConfiguration: BetterPlayerCacheConfiguration(
+            useCache: false, // Already cached locally
+          ),
+        );
         isOfflineMode.value = true;
       } else {
-        // For online mode, use the direct URL (no need to add auth header as it's a signed URL)
-        videoPlayerController.value = VideoPlayerController.network(videoPath);
+        dataSource = BetterPlayerDataSource(
+          BetterPlayerDataSourceType.network,
+          videoPath,
+          cacheConfiguration: BetterPlayerCacheConfiguration(
+            useCache: true,
+            maxCacheSize: 100 * 1024 * 1024, // 100 MB cache
+            maxCacheFileSize: 50 * 1024 * 1024, // 50 MB per file
+          ),
+          bufferingConfiguration: BetterPlayerBufferingConfiguration(
+            minBufferMs: 2000,
+            maxBufferMs: 10000,
+            bufferForPlaybackMs: 1000,
+            bufferForPlaybackAfterRebufferMs: 2000,
+          ),
+        );
         isOfflineMode.value = false;
       }
 
-      // Initialize player with timeout
-      await videoPlayerController.value!.initialize().timeout(
-        Duration(seconds: 10),
-        onTimeout: () {
-          throw Exception('Video initialization timeout');
-        },
+      final betterPlayerConfiguration = BetterPlayerConfiguration(
+        autoPlay: true,
+        looping: false,
+        fullScreenByDefault: false,
+        fit: BoxFit.cover,
+        aspectRatio: 16 / 9,
+        controlsConfiguration: BetterPlayerControlsConfiguration(
+          showControls: false, // We're using custom controls
+        ),
+        autoDetectFullscreenDeviceOrientation: true,
+        handleLifecycle: true,
+        // This helps with MTK devices - forces software decoding when needed
+        autoDetectFullscreenAspectRatio: true,
       );
 
-      // CRITICAL: Additional validation - check if video has valid duration
-      final duration = videoPlayerController.value!.value.duration;
-      if (duration == Duration.zero || duration.inSeconds < 1) {
+      betterPlayerController.value = BetterPlayerController(
+        betterPlayerConfiguration,
+        betterPlayerDataSource: dataSource,
+      );
+
+      // Wait for initialization with timeout
+      await Future.delayed(Duration(milliseconds: 500));
+
+      bool initialized = false;
+      final initTimeout = DateTime.now().add(Duration(seconds: 15));
+
+      while (!initialized && DateTime.now().isBefore(initTimeout)) {
+        if (betterPlayerController.value?.isVideoInitialized() == true) {
+          initialized = true;
+          break;
+        }
+        await Future.delayed(Duration(milliseconds: 100));
+      }
+
+      if (!initialized) {
+        throw Exception('Video initialization timeout');
+      }
+
+      // Validate video duration
+      final duration =
+          betterPlayerController.value?.videoPlayerController?.value.duration;
+      if (duration == null ||
+          duration == Duration.zero ||
+          duration.inSeconds < 1) {
         throw Exception('Video has invalid duration: $duration');
       }
 
-      // Set up listeners
-      videoPlayerController.value!.addListener(_videoPlayerListener);
+      // Set up listener
+      _setupPlayerListener();
 
-      // Auto-play
-      await videoPlayerController.value!.play();
+      // Set playback speed
+      await betterPlayerController.value?.setSpeed(playbackSpeed.value);
+
       isPlaying.value = true;
       isVideoInitialized.value = true;
 
-      // تعيين سرعة التشغيل (للتأكد من استخدام السرعة الصحيحة إذا تم تغييرها سابقاً)
-      await videoPlayerController.value!.setPlaybackSpeed(playbackSpeed.value);
-
-      // Enable wakelock to keep screen on
       WakelockPlus.enable();
 
-      return true; // تهيئة ناجحة
+      return true;
     } catch (e) {
       print('Error initializing video player: $e');
       print('Error details: ${e.toString()}');
       isVideoInitialized.value = false;
 
-      // إذا كان الخطأ في وضع عدم الاتصال، تحقق أولاً إذا كان التنزيل قيد التنفيذ
-      if (isOffline && _currentLocalFilePath != null && currentVideo.value != null) {
+      if (isOffline &&
+          _currentLocalFilePath != null &&
+          currentVideo.value != null) {
         final videoId = currentVideo.value!.id;
-        
-        // CRITICAL: Check if download is in progress before deleting
-        final downloadStatus = _downloadManager.getDownloadStatusString(videoId);
-        final isDownloading = downloadStatus == 'downloading' || downloadStatus == 'paused';
-        
+
+        final downloadStatus =
+            _downloadManager.getDownloadStatusString(videoId);
+        final isDownloading =
+            downloadStatus == 'downloading' || downloadStatus == 'paused';
+
         if (isDownloading) {
-          print('⚠️ Download in progress, file may not be complete yet. Trying online playback instead.');
-          // Don't delete file if download is in progress - it might just be incomplete
+          print(
+              '⚠️ Download in progress, file may not be complete yet. Trying online playback instead.');
           if (await _hasInternetConnection() && !hasTriedOnlineFallback.value) {
             hasTriedOnlineFallback.value = true;
-            print("Local playback failed (download in progress), trying online playback");
-            final String? streamUrl = await _videoRepository.getVideoUrl(videoId);
+            print(
+                "Local playback failed (download in progress), trying online playback");
+            final String? streamUrl =
+                await _videoRepository.getVideoUrl(videoId);
             if (streamUrl != null) {
               return await initializeVideoPlayer(streamUrl, isOffline: false);
             }
           }
           return false;
         }
-        
-        // Check if file is a temp file
+
         if (_currentLocalFilePath!.endsWith('.tmp')) {
           print('⚠️ Trying to play temp file, switching to online playback');
           if (await _hasInternetConnection() && !hasTriedOnlineFallback.value) {
             hasTriedOnlineFallback.value = true;
-            final String? streamUrl = await _videoRepository.getVideoUrl(videoId);
+            final String? streamUrl =
+                await _videoRepository.getVideoUrl(videoId);
             if (streamUrl != null) {
               return await initializeVideoPlayer(streamUrl, isOffline: false);
             }
           }
           return false;
         }
-        
-        // Only delete if download is complete and file is truly corrupted
-        // Give it one more chance - wait a bit and retry
+
         print('⚠️ Local file failed to play, waiting and retrying once...');
         await Future.delayed(Duration(milliseconds: 500));
-        
+
         try {
-          // Try to reinitialize
-          if (videoPlayerController.value != null) {
-            await videoPlayerController.value!.dispose();
-            videoPlayerController.value = null;
+          if (betterPlayerController.value != null) {
+            await _playerEventSubscription?.cancel();
+            betterPlayerController.value!.dispose();
+            betterPlayerController.value = null;
           }
-          
-          videoPlayerController.value = VideoPlayerController.file(File(_currentLocalFilePath!));
-          await videoPlayerController.value!.initialize();
-          
-          final duration = videoPlayerController.value!.value.duration;
-          if (duration != Duration.zero && duration.inSeconds >= 1) {
-            // Success on retry
-            videoPlayerController.value!.addListener(_videoPlayerListener);
-            await videoPlayerController.value!.play();
-            isPlaying.value = true;
-            isVideoInitialized.value = true;
-            await videoPlayerController.value!.setPlaybackSpeed(playbackSpeed.value);
-            WakelockPlus.enable();
-            return true;
+
+          final retryDataSource = BetterPlayerDataSource(
+            BetterPlayerDataSourceType.file,
+            _currentLocalFilePath!,
+          );
+
+          final retryConfiguration = BetterPlayerConfiguration(
+            autoPlay: true,
+            looping: false,
+            controlsConfiguration: BetterPlayerControlsConfiguration(
+              showControls: false,
+            ),
+          );
+
+          betterPlayerController.value = BetterPlayerController(
+            retryConfiguration,
+            betterPlayerDataSource: retryDataSource,
+          );
+
+          await Future.delayed(Duration(milliseconds: 500));
+
+          if (betterPlayerController.value?.isVideoInitialized() == true) {
+            final duration = betterPlayerController
+                .value?.videoPlayerController?.value.duration;
+            if (duration != null &&
+                duration != Duration.zero &&
+                duration.inSeconds >= 1) {
+              _setupPlayerListener();
+              await betterPlayerController.value?.setSpeed(playbackSpeed.value);
+              isPlaying.value = true;
+              isVideoInitialized.value = true;
+              WakelockPlus.enable();
+              return true;
+            }
           }
         } catch (retryError) {
           print('Retry also failed: $retryError');
         }
-        
-        // If retry failed, then consider it corrupted
+
         print('❌ File appears to be corrupted after retry, deleting...');
         await _handleCorruptedLocalFile(videoId, _currentLocalFilePath!);
 
-        // محاولة تشغيل الفيديو عبر الإنترنت إذا كان متاحًا
         if (await _hasInternetConnection() && !hasTriedOnlineFallback.value) {
           hasTriedOnlineFallback.value = true;
           print("Local playback failed, trying online playback");
@@ -485,64 +541,62 @@ class VideoController extends GetxController {
           type: SnackBarType.error,
         );
       }
-      return false; // تهيئة فاشلة
+      return false;
     }
   }
 
+  void _setupPlayerListener() {
+    _playerEventSubscription?.cancel();
+
+    _playerEventSubscription =
+        betterPlayerController.value?.videoPlayerController?.addListener(() {
+      _videoPlayerListener();
+    }) as StreamSubscription?;
+  }
 
   RxBool hasShownZoomHint = false.obs;
 
-// دالة لتعيين حالة عرض تلميح الزوم
   void setZoomHintShown() {
     hasShownZoomHint.value = true;
   }
 
-  // Variable to track if video was already marked as watched
   bool _videoMarkedAsWatched = false;
 
-  // Video player listener
   void _videoPlayerListener() {
-    if (videoPlayerController.value != null) {
-      // Update progress
-      final Duration position = videoPlayerController.value!.value.position;
-      final Duration duration = videoPlayerController.value!.value.duration;
+    if (betterPlayerController.value?.videoPlayerController != null) {
+      final videoController =
+          betterPlayerController.value!.videoPlayerController!;
+
+      final Duration position = videoController.value.position;
+      final Duration duration = videoController.value.duration ?? Duration.zero;
 
       if (duration.inMilliseconds > 0) {
         videoProgress.value = position.inMilliseconds / duration.inMilliseconds;
       }
 
-      // Update playing state
-      isPlaying.value = videoPlayerController.value!.value.isPlaying;
+      isPlaying.value = videoController.value.isPlaying;
+      isBuffering.value = videoController.value.isBuffering;
 
-      // Update buffering state
-      isBuffering.value = videoPlayerController.value!.value.isBuffering;
-
-      // التعامل مع أخطاء التشغيل أثناء المشاهدة
-      if (videoPlayerController.value!.value.hasError && !hasTriedOnlineFallback.value) {
+      if (videoController.value.hasError && !hasTriedOnlineFallback.value) {
         _handlePlaybackError();
       }
 
-      // Check if video ended (mark as watched if at least 95% completed)
       if (duration.inMilliseconds > 0 && !_videoMarkedAsWatched) {
         final progress = position.inMilliseconds / duration.inMilliseconds;
-        // Mark as watched if video is at least 95% complete or reached the end
-        if (progress >= 0.95 || position.inMilliseconds >= duration.inMilliseconds - 1000) {
+        if (progress >= 0.95 ||
+            position.inMilliseconds >= duration.inMilliseconds - 1000) {
           _markVideoAsWatched();
         }
       }
 
-      // Check if video ended
-      if (position.inMilliseconds >= duration.inMilliseconds && !isBuffering.value) {
-        // Show controls when video ends
+      if (position.inMilliseconds >= duration.inMilliseconds &&
+          !isBuffering.value) {
         controlsVisible.value = true;
-
-        // Disable wakelock when video ends
         WakelockPlus.disable();
       }
     }
   }
 
-  // Mark video as watched in storage
   Future<void> _markVideoAsWatched() async {
     if (currentVideo.value != null && !_videoMarkedAsWatched) {
       _videoMarkedAsWatched = true;
@@ -551,72 +605,72 @@ class VideoController extends GetxController {
     }
   }
 
-  // دالة جديدة للتعامل مع أخطاء التشغيل
   void _handlePlaybackError() async {
-    if (isOfflineMode.value && await _hasInternetConnection() && currentVideo.value != null) {
+    if (isOfflineMode.value &&
+        await _hasInternetConnection() &&
+        currentVideo.value != null) {
       hasTriedOnlineFallback.value = true;
       print("Playback error detected, switching to online mode");
 
-      // حذف الملف المحلي التالف إذا كنا في وضع عدم الاتصال
       if (_currentLocalFilePath != null) {
-        await _handleCorruptedLocalFile(currentVideo.value!.id, _currentLocalFilePath!);
+        await _handleCorruptedLocalFile(
+            currentVideo.value!.id, _currentLocalFilePath!);
       }
 
       final context = Get.context;
       if (context != null) {
         ShamraSnackBar.show(
           context: context,
-          message: 'جاري التبديل للمشاهدة عبر الإنترنت: حدث خطأ في تشغيل الفيديو المحلي',
+          message:
+              'جاري التبديل للمشاهدة عبر الإنترنت: حدث خطأ في تشغيل الفيديو المحلي',
           type: SnackBarType.info,
           duration: Duration(seconds: 2),
         );
       }
 
-      final String? streamUrl = await _videoRepository.getVideoUrl(currentVideo.value!.id);
+      final String? streamUrl =
+          await _videoRepository.getVideoUrl(currentVideo.value!.id);
       if (streamUrl != null) {
         await initializeVideoPlayer(streamUrl, isOffline: false);
       }
-    } else if (isOfflineMode.value && currentVideo.value != null && _currentLocalFilePath != null) {
-      // إذا لم يكن هناك اتصال بالإنترنت، احذف الملف التالف فقط
-      await _handleCorruptedLocalFile(currentVideo.value!.id, _currentLocalFilePath!);
+    } else if (isOfflineMode.value &&
+        currentVideo.value != null &&
+        _currentLocalFilePath != null) {
+      await _handleCorruptedLocalFile(
+          currentVideo.value!.id, _currentLocalFilePath!);
     }
   }
 
-  // Play/pause toggle
   void playPause() {
-    if (videoPlayerController.value != null) {
+    if (betterPlayerController.value != null) {
       if (isPlaying.value) {
-        videoPlayerController.value!.pause();
-        // Disable wakelock when paused
+        betterPlayerController.value!.pause();
         WakelockPlus.disable();
       } else {
-        videoPlayerController.value!.play();
-        // Enable wakelock when playing
+        betterPlayerController.value!.play();
         WakelockPlus.enable();
         _startHideControlsTimer();
       }
     }
   }
 
-  // دالة لتغيير سرعة تشغيل الفيديو
   Future<void> setPlaybackSpeed(double speed) async {
-    if (videoPlayerController.value != null) {
+    if (betterPlayerController.value != null) {
       try {
-        await videoPlayerController.value!.setPlaybackSpeed(speed);
+        await betterPlayerController.value!.setSpeed(speed);
         playbackSpeed.value = speed;
 
-        // إظهار رسالة تأكيد للمستخدم
         final context = Get.context;
         if (context != null) {
           ShamraSnackBar.show(
             context: context,
-            message: 'تم تغيير السرعة: سرعة التشغيل: ${speed == 1.0 ? "طبيعية" : "x" + speed.toStringAsFixed(1)}',
+            message:
+                'تم تغيير السرعة: سرعة التشغيل: ${speed == 1.0 ? "طبيعية" : "x" + speed.toStringAsFixed(1)}',
             type: SnackBarType.info,
             duration: Duration(seconds: 1),
           );
         }
 
-        // إبقاء عناصر التحكم ظاهرة لبعض الوقت
         _startHideControlsTimer();
       } catch (e) {
         print('Error setting playback speed: $e');
@@ -624,31 +678,30 @@ class VideoController extends GetxController {
     }
   }
 
-  // Seek to position
   void seekTo(Duration position) {
-    if (videoPlayerController.value != null) {
-      videoPlayerController.value!.seekTo(position);
+    if (betterPlayerController.value != null) {
+      betterPlayerController.value!.seekTo(position);
       _startHideControlsTimer();
     }
   }
 
-  // Seek based on progress percentage
   void seekToProgress(double progress) {
-    if (videoPlayerController.value != null) {
-      final Duration duration = videoPlayerController.value!.value.duration;
+    if (betterPlayerController.value?.videoPlayerController != null) {
+      final Duration duration =
+          betterPlayerController.value!.videoPlayerController!.value.duration ?? Duration.zero;
       final int milliseconds = (progress * duration.inMilliseconds).round();
       seekTo(Duration(milliseconds: milliseconds));
     }
   }
 
-  // Skip forward 10 seconds
   void skipForward() {
-    if (videoPlayerController.value != null) {
-      final Duration currentPosition = videoPlayerController.value!.value.position;
-      final Duration duration = videoPlayerController.value!.value.duration;
+    if (betterPlayerController.value?.videoPlayerController != null) {
+      final Duration currentPosition =
+          betterPlayerController.value!.videoPlayerController!.value.position;
+      final Duration duration =
+          betterPlayerController.value!.videoPlayerController!.value.duration ?? Duration.zero;
       final Duration newPosition = currentPosition + Duration(seconds: 10);
-      
-      // Don't skip past the end
+
       if (newPosition < duration) {
         seekTo(newPosition);
       } else {
@@ -657,13 +710,12 @@ class VideoController extends GetxController {
     }
   }
 
-  // Skip backward 10 seconds
   void skipBackward() {
-    if (videoPlayerController.value != null) {
-      final Duration currentPosition = videoPlayerController.value!.value.position;
+    if (betterPlayerController.value?.videoPlayerController != null) {
+      final Duration currentPosition =
+          betterPlayerController.value!.videoPlayerController!.value.position;
       final Duration newPosition = currentPosition - Duration(seconds: 10);
-      
-      // Don't skip before the beginning
+
       if (newPosition > Duration.zero) {
         seekTo(newPosition);
       } else {
@@ -672,7 +724,6 @@ class VideoController extends GetxController {
     }
   }
 
-  // Toggle controls visibility
   void toggleControlsVisibility() {
     controlsVisible.value = !controlsVisible.value;
     if (controlsVisible.value) {
@@ -699,18 +750,16 @@ class VideoController extends GetxController {
   @override
   void onClose() {
     _cancelHideControlsTimer();
-    if (videoPlayerController.value != null) {
-      videoPlayerController.value!.removeListener(_videoPlayerListener);
-      videoPlayerController.value!.dispose();
+    _playerEventSubscription?.cancel();
+    if (betterPlayerController.value != null) {
+      betterPlayerController.value!.dispose();
     }
 
-    // Restore system UI and orientation
     _setFullScreen(false);
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
     ]);
 
-    // Disable wakelock when leaving the video screen
     WakelockPlus.disable();
 
     super.onClose();

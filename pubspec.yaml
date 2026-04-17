@@ -42,7 +42,7 @@ dependencies:
   dio: ^5.9.0
   get_storage: ^2.1.1
 
-  video_player: ^2.10.0
+  # video_player: ^2.10.0
   chewie: ^1.13.0
   flutter_cache_manager: ^3.4.1
   path_provider: ^2.1.5
@@ -61,7 +61,7 @@ dependencies:
   flutter_windowmanager_plus: ^1.0.1
   open_filex: ^4.7.0
   mobile_scanner: ^6.0.2
-
+  better_player_plus: ^1.1.5
 dependency_overrides:
   url_launcher_android: ^6.3.24
 

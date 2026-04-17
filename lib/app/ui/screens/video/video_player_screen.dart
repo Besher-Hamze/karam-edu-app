@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
-import 'package:video_player/video_player.dart';
+import 'package:better_player_plus/better_player_plus.dart';
 import '../../../controllers/video_controller.dart';
 import '../../theme/color_theme.dart';
 
@@ -14,20 +14,18 @@ class VideoPlayerScreen extends GetView<VideoController> {
       DeviceOrientation.portraitUp,
     ]);
 
-    // Set full screen mode
     SystemChrome.setEnabledSystemUIMode(
       SystemUiMode.immersiveSticky,
-      overlays: [], // Hide both status bar and navigation bar
+      overlays: [],
     );
 
     return Scaffold(
       backgroundColor: Colors.black,
       body: WillPopScope(
         onWillPop: () async {
-          // Restore system UI when back button is pressed
           SystemChrome.setEnabledSystemUIMode(
             SystemUiMode.manual,
-            overlays: SystemUiOverlay.values, // Show all system UI
+            overlays: SystemUiOverlay.values,
           );
           return true;
         },
@@ -50,7 +48,6 @@ class VideoPlayerScreen extends GetView<VideoController> {
     );
   }
 
-  // Simple loading state
   Widget _buildLoadingState() {
     return Center(
       child: CircularProgressIndicator(
@@ -59,7 +56,6 @@ class VideoPlayerScreen extends GetView<VideoController> {
     );
   }
 
-  // Simple error state
   Widget _buildErrorState() {
     return Center(
       child: Column(
@@ -81,7 +77,6 @@ class VideoPlayerScreen extends GetView<VideoController> {
           SizedBox(height: 12),
           TextButton(
             onPressed: () {
-              // Restore system UI before going back
               SystemChrome.setEnabledSystemUIMode(
                 SystemUiMode.manual,
                 overlays: SystemUiOverlay.values,
@@ -95,7 +90,6 @@ class VideoPlayerScreen extends GetView<VideoController> {
     );
   }
 
-  // Simple buffering state
   Widget _buildBufferingState() {
     return Center(
       child: CircularProgressIndicator(
@@ -104,7 +98,6 @@ class VideoPlayerScreen extends GetView<VideoController> {
     );
   }
 
-  // Streamlined video player
   Widget _buildVideoPlayer() {
     return Obx(() =>
         InteractiveViewer(
@@ -114,15 +107,18 @@ class VideoPlayerScreen extends GetView<VideoController> {
             onTap: controller.toggleControlsVisibility,
             child: Stack(
               children: [
-                // Video player
+                // Better Player Video
                 Center(
                   child: AspectRatio(
-                    aspectRatio: controller.videoPlayerController.value!.value.aspectRatio,
-                    child: VideoPlayer(controller.videoPlayerController.value!),
+                    aspectRatio: controller.betterPlayerController.value!
+                        .videoPlayerController!.value.aspectRatio,
+                    child: BetterPlayer(
+                      controller: controller.betterPlayerController.value!,
+                    ),
                   ),
                 ),
 
-                // Controls overlay (with fade in/out animation)
+                // Custom Controls Overlay
                 AnimatedOpacity(
                   opacity: controller.controlsVisible.value ? 1.0 : 0.0,
                   duration: Duration(milliseconds: 300),
@@ -130,14 +126,13 @@ class VideoPlayerScreen extends GetView<VideoController> {
                     color: Colors.black.withOpacity(0.4),
                     child: Stack(
                       children: [
-                        // Back button (top left)
+                        // Back button
                         Positioned(
                           top: 16,
                           left: 16,
                           child: IconButton(
                             icon: Icon(Icons.arrow_back, color: Colors.white),
                             onPressed: () {
-                              // Restore system UI before going back
                               SystemChrome.setEnabledSystemUIMode(
                                 SystemUiMode.manual,
                                 overlays: SystemUiOverlay.values,
@@ -147,13 +142,13 @@ class VideoPlayerScreen extends GetView<VideoController> {
                           ),
                         ),
 
-                        // Top right controls - Speed & Zoom
+                        // Top right controls
                         Positioned(
                           top: 16,
                           right: 16,
                           child: Row(
                             children: [
-                              // Offline indicator (if in offline mode)
+                              // Offline indicator
                               if (controller.isOfflineMode.value)
                                 Container(
                                   margin: EdgeInsets.only(right: 8),
@@ -175,7 +170,7 @@ class VideoPlayerScreen extends GetView<VideoController> {
                                   ),
                                 ),
 
-                              // Playback speed button
+                              // Playback speed dropdown
                               Container(
                                 decoration: BoxDecoration(
                                   color: Colors.black54,
@@ -208,7 +203,7 @@ class VideoPlayerScreen extends GetView<VideoController> {
                                 ),
                               ),
 
-                              // Zoom indicator
+                              // Zoom hint
                               Container(
                                 margin: EdgeInsets.only(left: 8),
                                 padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -232,12 +227,12 @@ class VideoPlayerScreen extends GetView<VideoController> {
                           ),
                         ),
 
-                        // Center controls: backward, play/pause, forward
+                        // Center controls
                         Center(
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              // Backward 10s button
+                              // Backward
                               GestureDetector(
                                 onTap: controller.skipBackward,
                                 child: Container(
@@ -246,22 +241,17 @@ class VideoPlayerScreen extends GetView<VideoController> {
                                     color: Colors.black.withOpacity(0.6),
                                     shape: BoxShape.circle,
                                   ),
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        Icons.replay_10,
-                                        color: Colors.white,
-                                        size: 32,
-                                      ),
-                                    ],
+                                  child: Icon(
+                                    Icons.replay_10,
+                                    color: Colors.white,
+                                    size: 32,
                                   ),
                                 ),
                               ),
                               
                               SizedBox(width: 24),
                               
-                              // Play/Pause button
+                              // Play/Pause
                               GestureDetector(
                                 onTap: controller.playPause,
                                 child: Container(
@@ -280,7 +270,7 @@ class VideoPlayerScreen extends GetView<VideoController> {
                               
                               SizedBox(width: 24),
                               
-                              // Forward 10s button
+                              // Forward
                               GestureDetector(
                                 onTap: controller.skipForward,
                                 child: Container(
@@ -289,15 +279,10 @@ class VideoPlayerScreen extends GetView<VideoController> {
                                     color: Colors.black.withOpacity(0.6),
                                     shape: BoxShape.circle,
                                   ),
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        Icons.forward_10,
-                                        color: Colors.white,
-                                        size: 32,
-                                      ),
-                                    ],
+                                  child: Icon(
+                                    Icons.forward_10,
+                                    color: Colors.white,
+                                    size: 32,
                                   ),
                                 ),
                               ),
@@ -305,7 +290,7 @@ class VideoPlayerScreen extends GetView<VideoController> {
                           ),
                         ),
 
-                        // Bottom controls - progress bar and time
+                        // Bottom controls
                         Positioned(
                           bottom: 16,
                           left: 16,
@@ -313,11 +298,19 @@ class VideoPlayerScreen extends GetView<VideoController> {
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Row(
+                              Builder(
+                                builder: (_) {
+                                  final videoController = controller.betterPlayerController.value
+                                      ?.videoPlayerController;
+                                  final videoValue = videoController?.value;
+                                  final position = videoValue?.position ?? Duration.zero;
+                                  final totalDuration = videoValue?.duration ?? Duration.zero;
+
+                                  return Row(
                                 children: [
-                                  // Current position
+                                  // Current time
                                   Text(
-                                    _formatDuration(controller.videoPlayerController.value!.value.position),
+                                    _formatDuration(position),
                                     style: TextStyle(color: Colors.white),
                                   ),
 
@@ -346,16 +339,17 @@ class VideoPlayerScreen extends GetView<VideoController> {
 
                                   // Total duration
                                   Text(
-                                    _formatDuration(controller.videoPlayerController.value!.value.duration),
+                                    _formatDuration(totalDuration),
                                     style: TextStyle(color: Colors.white),
                                   ),
 
-                                  // Add spacer for devices with notches
                                   SizedBox(width: MediaQuery.of(Get.context!).padding.right + 8),
                                 ],
+                                  );
+                                },
                               ),
 
-                              // Speed buttons for quick access
+                              // Speed buttons
                               SizedBox(height: 8),
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
@@ -390,7 +384,6 @@ class VideoPlayerScreen extends GetView<VideoController> {
     );
   }
 
-  // Helper to build speed selection buttons
   Widget _buildSpeedButton(double speed) {
     return Obx(() {
       final isSelected = controller.playbackSpeed.value == speed;
@@ -423,7 +416,6 @@ class VideoPlayerScreen extends GetView<VideoController> {
     });
   }
 
-  // Format duration to MM:SS
   String _formatDuration(Duration duration) {
     String twoDigits(int n) => n.toString().padLeft(2, '0');
     final String minutes = twoDigits(duration.inMinutes.remainder(60));
