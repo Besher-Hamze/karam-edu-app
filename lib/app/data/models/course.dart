@@ -1,6 +1,9 @@
 class Course {
   static const String defaultTeacherName = 'كرم غريب';
 
+  /// When API sends [fullName] equal to this, UI shows [defaultTeacherName].
+  static const String apiPlatformOwnerFullName = 'Platform Owner';
+
   final String id;
   final String name;
   final String description;
@@ -23,10 +26,11 @@ class Course {
       this.isAvailable,
       this.teacherName});
 
-  /// Teacher label for UI: [teacherName] when non-empty, otherwise [defaultTeacherName].
+  /// Teacher label for UI: [teacherName] when set, except [apiPlatformOwnerFullName] → [defaultTeacherName].
   String get displayTeacherName {
     final t = teacherName?.trim();
     if (t == null || t.isEmpty) return defaultTeacherName;
+    if (t == apiPlatformOwnerFullName) return defaultTeacherName;
     return t;
   }
 
@@ -42,15 +46,24 @@ class Course {
       updatedAt:
           json['updatedAt'] != null ? DateTime.parse(json['updatedAt']) : null,
       isAvailable: json['isAvailable'] != null ? json['isAvailable'] : false,
-      teacherName: _parseOptionalString(
-          json['teacherName']),
+      teacherName: _parseTeacherFromJson(json['teacherName']),
     );
   }
 
-  static String? _parseOptionalString(dynamic value) {
+  /// API may send `teacherName` as a string or `{ "fullName": "..." , ... }`.
+  static String? _parseTeacherFromJson(dynamic value) {
     if (value == null) return null;
-    if (value is String) return value;
-    return value.toString();
+    if (value is String) {
+      final t = value.trim();
+      return t.isEmpty ? null : t;
+    }
+    if (value is Map) {
+      final dynamic fn = value['fullName'] ?? value['name'];
+      if (fn == null) return null;
+      final t = fn.toString().trim();
+      return t.isEmpty ? null : t;
+    }
+    return null;
   }
   Map<String, dynamic> toJson() {
     return {
