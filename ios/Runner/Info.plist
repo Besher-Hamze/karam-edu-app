@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Course Platform</string>
+	<string>كرام</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -13,7 +13,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>course_platform</string>
+	<string>كرام</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -45,5 +45,21 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+
+	<!-- Privacy — required for App Store when requesting camera (QR enrollment) -->
+	<key>NSCameraUsageDescription</key>
+	<string>نحتاج إلى الكاميرا لمسح رمز QR لتسجيل الاشتراك في الدورات.</string>
+
+	<!-- Export compliance: app only uses standard HTTPS/TLS encryption -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+
+	<!-- Temporary: API uses cleartext HTTP to an IP. Domain exceptions do not apply to IPs.
+	     Move the API to HTTPS + a domain before/soon after App Store release. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 </dict>
 </plist>
