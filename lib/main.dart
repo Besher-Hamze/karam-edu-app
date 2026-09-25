@@ -19,7 +19,7 @@ void main() async {
   await GetStorage.init();
   await initServices();
   await FlutterWindowManagerPlus.addFlags(FlutterWindowManagerPlus.FLAG_SECURE);
-  List<String> allowDevice = ["SP1A.210812.016"];
+  List<String> allowDevice = ["SP1A.210812.016","RP1A.200720.012"];
   String identifier = '';
   DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
   if (GetPlatform.isAndroid) {
@@ -68,7 +68,7 @@ void main() async {
     securityIssue = "خطأ في فحص الأمان";
   }
 
-  if (true) {
+  if (isSafeDevice) {
     runApp(MyApp());
   } else {
     runApp(CompromisedDeviceApp(securityIssue: securityIssue));

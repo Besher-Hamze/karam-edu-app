@@ -327,6 +327,25 @@ class VideoController extends GetxController {
     }
   }
 
+  /// [BetterPlayer] uses [BetterPlayerConfiguration.aspectRatio] when set;
+  /// a fixed 16:9 forces portrait sources into a landscape box (wrong crop/fit).
+  void _syncPlayerAspectRatioFromVideo() {
+    final ctrl = betterPlayerController.value;
+    final vpc = ctrl?.videoPlayerController;
+    if (ctrl == null || vpc == null || !vpc.value.initialized) return;
+
+    double ar = vpc.value.aspectRatio;
+    if (ar.isNaN || ar.isInfinite || ar <= 0) {
+      final size = vpc.value.size;
+      if (size != null && size.height > 0) {
+        ar = size.width / size.height;
+      } else {
+        ar = 16 / 9;
+      }
+    }
+    ctrl.setOverriddenAspectRatio(ar);
+  }
+
   Future<bool> initializeVideoPlayer(String videoPath,
       {bool isOffline = false}) async {
     // Dispose previous controller if exists
@@ -372,8 +391,9 @@ class VideoController extends GetxController {
         autoPlay: true,
         looping: false,
         fullScreenByDefault: false,
-        fit: BoxFit.cover,
-        aspectRatio: 16 / 9,
+        // Let the video define its own frame; do not hardcode 16:9 (breaks portrait).
+        aspectRatio: null,
+        fit: BoxFit.contain,
         controlsConfiguration: BetterPlayerControlsConfiguration(
           showControls: false, // We're using custom controls
         ),
@@ -414,6 +434,8 @@ class VideoController extends GetxController {
           duration.inSeconds < 1) {
         throw Exception('Video has invalid duration: $duration');
       }
+
+      _syncPlayerAspectRatioFromVideo();
 
       // Set up listener
       _setupPlayerListener();
@@ -489,9 +511,14 @@ class VideoController extends GetxController {
           final retryConfiguration = BetterPlayerConfiguration(
             autoPlay: true,
             looping: false,
+            aspectRatio: null,
+            fit: BoxFit.contain,
             controlsConfiguration: BetterPlayerControlsConfiguration(
               showControls: false,
             ),
+            autoDetectFullscreenDeviceOrientation: true,
+            autoDetectFullscreenAspectRatio: true,
+            handleLifecycle: true,
           );
 
           betterPlayerController.value = BetterPlayerController(
@@ -507,6 +534,7 @@ class VideoController extends GetxController {
             if (duration != null &&
                 duration != Duration.zero &&
                 duration.inSeconds >= 1) {
+              _syncPlayerAspectRatioFromVideo();
               _setupPlayerListener();
               await betterPlayerController.value?.setSpeed(playbackSpeed.value);
               isPlaying.value = true;
