@@ -5,29 +5,58 @@ import 'package:better_player_plus/better_player_plus.dart';
 import '../../../controllers/video_controller.dart';
 import '../../theme/color_theme.dart';
 
-class VideoPlayerScreen extends GetView<VideoController> {
+class VideoPlayerScreen extends StatefulWidget {
   @override
-  Widget build(BuildContext context) {
+  State<VideoPlayerScreen> createState() => _VideoPlayerScreenState();
+}
+
+class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
+  VideoController get controller => Get.find<VideoController>();
+
+  @override
+  void initState() {
+    super.initState();
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
       DeviceOrientation.portraitUp,
     ]);
-
     SystemChrome.setEnabledSystemUIMode(
       SystemUiMode.immersiveSticky,
       overlays: [],
     );
+  }
 
+  void _leaveVideo() {
+    SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.manual,
+      overlays: SystemUiOverlay.values,
+    );
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+    ]);
+    if (Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    } else {
+      Get.back();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-      body: WillPopScope(
-        onWillPop: () async {
+      body: PopScope(
+        canPop: true,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) return;
           SystemChrome.setEnabledSystemUIMode(
             SystemUiMode.manual,
             overlays: SystemUiOverlay.values,
           );
-          return true;
+          SystemChrome.setPreferredOrientations([
+            DeviceOrientation.portraitUp,
+          ]);
         },
         child: Obx(() {
           if (controller.isLoading.value) {
@@ -76,13 +105,7 @@ class VideoPlayerScreen extends GetView<VideoController> {
           ),
           SizedBox(height: 12),
           TextButton(
-            onPressed: () {
-              SystemChrome.setEnabledSystemUIMode(
-                SystemUiMode.manual,
-                overlays: SystemUiOverlay.values,
-              );
-              Get.back();
-            },
+            onPressed: _leaveVideo,
             child: Text('العودة', style: TextStyle(color: Colors.white70)),
           ),
         ],
@@ -100,15 +123,15 @@ class VideoPlayerScreen extends GetView<VideoController> {
 
   Widget _buildVideoPlayer(BuildContext context) {
     return Obx(() =>
-        InteractiveViewer(
-          maxScale: 4.0,
-          minScale: 0.5,
-          child: GestureDetector(
-            onTap: controller.toggleControlsVisibility,
-            child: Stack(
-              children: [
-                // Better Player Video
-                Center(
+        Stack(
+          fit: StackFit.expand,
+          children: [
+            InteractiveViewer(
+              maxScale: 4.0,
+              minScale: 0.5,
+              child: GestureDetector(
+                onTap: controller.toggleControlsVisibility,
+                child: Center(
                   child: AspectRatio(
                     aspectRatio: controller.betterPlayerController.value!
                         .videoPlayerController!.value.aspectRatio,
@@ -117,31 +140,20 @@ class VideoPlayerScreen extends GetView<VideoController> {
                     ),
                   ),
                 ),
+              ),
+            ),
 
-                // Custom Controls Overlay
-                AnimatedOpacity(
-                  opacity: controller.controlsVisible.value ? 1.0 : 0.0,
-                  duration: Duration(milliseconds: 300),
-                  child: Container(
-                    color: Colors.black.withOpacity(0.4),
-                    child: Stack(
-                      children: [
-                        // Back button
-                        Positioned(
-                          top: 16,
-                          left: 16,
-                          child: IconButton(
-                            icon: Icon(Icons.arrow_back, color: Colors.white),
-                            onPressed: () {
-                              SystemChrome.setEnabledSystemUIMode(
-                                SystemUiMode.manual,
-                                overlays: SystemUiOverlay.values,
-                              );
-                              Get.back();
-                            },
-                          ),
-                        ),
-
+            // Controls sit above the player. Back is outside InteractiveViewer
+            // so pinch-zoom cannot steal the tap on iPhone.
+            AnimatedOpacity(
+              opacity: controller.controlsVisible.value ? 1.0 : 0.0,
+              duration: Duration(milliseconds: 300),
+              child: IgnorePointer(
+                ignoring: !controller.controlsVisible.value,
+                child: Container(
+                  color: Colors.black.withOpacity(0.4),
+                  child: Stack(
+                    children: [
                         // Top right controls
                         Positioned(
                           top: 16,
@@ -318,20 +330,40 @@ class VideoPlayerScreen extends GetView<VideoController> {
                     ),
                   ),
                 ),
+              ),
 
-                // Buffering indicator
-                Obx(() => controller.isBuffering.value
-                    ? Center(
-                  child: CircularProgressIndicator(
-                    valueColor: AlwaysStoppedAnimation<Color>(ColorTheme.primary),
+              SafeArea(
+                child: Align(
+                  alignment: AlignmentDirectional.topStart,
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Material(
+                      color: Colors.black54,
+                      shape: const CircleBorder(),
+                      child: IconButton(
+                        iconSize: 28,
+                        tooltip: 'رجوع',
+                        icon: const Icon(
+                          Icons.arrow_back,
+                          color: Colors.white,
+                        ),
+                        onPressed: _leaveVideo,
+                      ),
+                    ),
                   ),
-                )
-                    : SizedBox.shrink(),
                 ),
-              ],
-            ),
+              ),
+
+              Obx(() => controller.isBuffering.value
+                  ? Center(
+                      child: CircularProgressIndicator(
+                        valueColor: AlwaysStoppedAnimation<Color>(ColorTheme.primary),
+                      ),
+                    )
+                  : const SizedBox.shrink(),
+              ),
+            ],
           ),
-        ),
     );
   }
 
