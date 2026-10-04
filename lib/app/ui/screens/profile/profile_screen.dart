@@ -54,6 +54,11 @@ class ProfileScreen extends GetView<ProfileController> {
                     // Logout button
                     _buildLogoutButton(context),
 
+                    SizedBox(height: 12),
+
+                    // Delete account (required by App Store Guideline 5.1.1(v))
+                    _buildDeleteAccountButton(context),
+
                     SizedBox(height: 30),
                   ],
                 ),
@@ -269,6 +274,66 @@ class ProfileScreen extends GetView<ProfileController> {
         ),
       ),
     );
+  }
+
+  Widget _buildDeleteAccountButton(BuildContext context) {
+    return Obx(() {
+      final deleting = controller.isDeletingAccount.value;
+      return SizedBox(
+        width: double.infinity,
+        height: 50,
+        child: OutlinedButton.icon(
+          onPressed: deleting ? null : () => _confirmDeleteAccount(context),
+          icon: deleting
+              ? SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Icon(Icons.delete_forever_outlined, color: Colors.red[700]),
+          label: Text(
+            deleting ? 'جاري حذف الحساب...' : 'حذف الحساب',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: Colors.red[700],
+            ),
+          ),
+          style: OutlinedButton.styleFrom(
+            side: BorderSide(color: Colors.red[300]!),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+        ),
+      );
+    });
+  }
+
+  Future<void> _confirmDeleteAccount(BuildContext context) async {
+    final confirmed = await Get.dialog<bool>(
+      AlertDialog(
+        title: Text('حذف الحساب'),
+        content: Text(
+          'هل أنت متأكد؟ سيتم حذف حسابك وبياناتك نهائياً ولا يمكن التراجع عن هذا الإجراء.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Get.back(result: false),
+            child: Text('إلغاء'),
+          ),
+          TextButton(
+            onPressed: () => Get.back(result: true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red[700]),
+            child: Text('حذف نهائياً'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await controller.deleteAccount();
+    }
   }
 
   // Helper method for info rows

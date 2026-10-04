@@ -31,4 +31,12 @@ class StudentProvider {
       rethrow;
     }
   }
+
+  Future<p.Response> deleteAccount(String id) async {
+    try {
+      return await _networkService.delete('/students/$id');
+    } catch (e) {
+      rethrow;
+    }
+  }
 }

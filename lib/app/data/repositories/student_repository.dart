@@ -32,4 +32,12 @@ class StudentRepository {
       rethrow;
     }
   }
+
+  Future<void> deleteAccount(String id) async {
+    try {
+      await _studentProvider.deleteAccount(id);
+    } catch (e) {
+      rethrow;
+    }
+  }
 }

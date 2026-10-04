@@ -18,6 +18,7 @@ class ProfileController extends GetxController {
   final Rx<Student?> student = Rx<Student?>(null);
   final RxBool isLoading = false.obs;
   final RxBool isUpdating = false.obs;
+  final RxBool isDeletingAccount = false.obs;
 
   final formKey = GlobalKey<FormState>();
   final fullNameController = TextEditingController();
@@ -131,6 +132,38 @@ class ProfileController extends GetxController {
   Future<void> logout() async {
     await _storageService.clearAllData();
     Get.offAllNamed('/login');
+  }
+
+  Future<void> deleteAccount() async {
+    if (student.value == null) return;
+
+    try {
+      isDeletingAccount.value = true;
+      await _studentRepository.deleteAccount(student.value!.id);
+      await _storageService.clearAllData();
+
+      final context = Get.context;
+      if (context != null) {
+        ShamraSnackBar.show(
+          context: context,
+          message: 'تم حذف الحساب نهائياً',
+          type: SnackBarType.success,
+        );
+      }
+
+      Get.offAllNamed('/login');
+    } catch (e) {
+      final context = Get.context;
+      if (context != null) {
+        ShamraSnackBar.show(
+          context: context,
+          message: 'خطأ: تعذر حذف الحساب، حاول مرة أخرى أو تواصل مع الدعم',
+          type: SnackBarType.error,
+        );
+      }
+    } finally {
+      isDeletingAccount.value = false;
+    }
   }
 
   @override
