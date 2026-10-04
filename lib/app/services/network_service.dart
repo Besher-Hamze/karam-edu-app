@@ -203,29 +203,36 @@ class NetworkService extends GetxService {
     }
   }
 
-  // Generate a secure random filename that doesn't look like a video
+  // Generate a secure random filename. Extension stays .mp4 so iOS can play it.
   String _generateSecureFilename() {
-    // List of common non-video extensions
-    final extensions = ['.dat', '.bin', '.db', '.enc', '.data'];
-
-    // Random length between 8-12 characters
     final random = Random();
     final length = random.nextInt(5) + 8;
 
-    // Generate a random string
     const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
     final randomString = List.generate(
         length,
             (index) => chars[random.nextInt(chars.length)]
     ).join();
 
-    // Add timestamp for uniqueness
     final timestamp = DateTime.now().millisecondsSinceEpoch;
+    return '$randomString-$timestamp.mp4';
+  }
 
-    // Pick a random extension
-    final extension = extensions[random.nextInt(extensions.length)];
-
-    return '$randomString-$timestamp$extension';
+  /// iOS rename fails if the destination already exists. Android overwrites.
+  Future<void> _moveTempToFinal(File tempFile, String filePath) async {
+    final destination = File(filePath);
+    if (await destination.exists()) {
+      await destination.delete();
+    }
+    try {
+      await tempFile.rename(filePath);
+    } catch (e) {
+      print('Rename failed, copying instead: $e');
+      await tempFile.copy(filePath);
+      if (await tempFile.exists()) {
+        await tempFile.delete();
+      }
+    }
   }
 
   Future<bool> _canWriteToDirectory(Directory dir) async {
@@ -492,7 +499,7 @@ class NetworkService extends GetxService {
                     await Future.delayed(Duration(milliseconds: 200));
                     
                     // Rename temp to final
-                    await tempFile.rename(filePath);
+                    await _moveTempToFinal(tempFile, filePath);
                     final finalFile = File(filePath);
                     if (await finalFile.exists()) {
                       final finalSize = await finalFile.length();
@@ -632,7 +639,7 @@ class NetworkService extends GetxService {
         if (await tempFile.exists()) {
           final tempSize = await tempFile.length();
           if (tempSize > 1024) {
-            await tempFile.rename(filePath);
+            await _moveTempToFinal(tempFile, filePath);
             final finalSize = await finalFile.length();
             onProgress(finalSize, finalSize);
             await _storageService.removePartialDownloadInfo(videoId);
@@ -751,7 +758,7 @@ class NetworkService extends GetxService {
               
               if (lastByte.isNotEmpty) {
                 // File is complete - rename and finalize
-                await tempFile.rename(filePath);
+                await _moveTempToFinal(tempFile, filePath);
                 final finalFile = File(filePath);
                 if (await finalFile.exists()) {
                   final finalSize = await finalFile.length();
@@ -988,7 +995,7 @@ class NetworkService extends GetxService {
 
       // Now it's safe to rename
       print('📝 Renaming temp file to final location...');
-      await tempFile.rename(filePath);
+      await _moveTempToFinal(tempFile, filePath);
       
       // Verify the renamed file exists and has correct size
       if (await finalFile.exists()) {

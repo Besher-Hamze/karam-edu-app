@@ -13,12 +13,22 @@ import 'app/services/network_service.dart';
 import 'app/controllers/video_download_manager.dart';
 import 'app/data/providers/video_provider.dart';
 import 'app/data/repositories/video_repository.dart';
+import 'app/services/screen_guard_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await GetStorage.init();
   await initServices();
-  await FlutterWindowManagerPlus.addFlags(FlutterWindowManagerPlus.FLAG_SECURE);
+  if (Platform.isAndroid) {
+    try {
+      await FlutterWindowManagerPlus.addFlags(FlutterWindowManagerPlus.FLAG_SECURE);
+    } catch (e) {
+      print('FLAG_SECURE failed: $e');
+    }
+  }
+  if (Platform.isIOS) {
+    await Get.putAsync(() => ScreenGuardService().init());
+  }
   List<String> allowDevice = ["SP1A.210812.016","RP1A.200720.012"];
   String identifier = '';
   DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
@@ -145,6 +155,31 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       supportedLocales: const [
         Locale('ar', 'SA'),
       ],
+      builder: (context, child) {
+        if (!Platform.isIOS || !Get.isRegistered<ScreenGuardService>()) {
+          return child ?? const SizedBox.shrink();
+        }
+        return Obx(() {
+          final recording = Get.find<ScreenGuardService>().isRecording.value;
+          return Stack(
+            children: [
+              child ?? const SizedBox.shrink(),
+              if (recording)
+                const Positioned.fill(
+                  child: ColoredBox(
+                    color: Colors.black,
+                    child: Center(
+                      child: Text(
+                        'تسجيل الشاشة غير مسموح',
+                        style: TextStyle(color: Colors.white, fontSize: 18),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          );
+        });
+      },
       initialRoute: AppPages.INITIAL,
       getPages: AppPages.routes,
     );

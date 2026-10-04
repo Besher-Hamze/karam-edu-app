@@ -175,6 +175,53 @@ class VideoController extends GetxController {
     }
   }
 
+  /// AVPlayer on iOS ignores files saved as .dat/.bin. Rename them to .mp4.
+  Future<String> _ensureIosPlayablePath(String videoId, String path) async {
+    final lower = path.toLowerCase();
+    if (lower.endsWith('.mp4') ||
+        lower.endsWith('.mov') ||
+        lower.endsWith('.m4v')) {
+      return path;
+    }
+
+    final file = File(path);
+    if (!await file.exists()) return path;
+
+    final slash = path.lastIndexOf('/');
+    final dot = path.lastIndexOf('.');
+    final mp4Path =
+        (dot > slash) ? '${path.substring(0, dot)}.mp4' : '$path.mp4';
+
+    try {
+      final dest = File(mp4Path);
+      if (await dest.exists()) {
+        await dest.delete();
+      }
+      try {
+        await file.rename(mp4Path);
+      } catch (_) {
+        await file.copy(mp4Path);
+        if (await file.exists()) {
+          await file.delete();
+        }
+      }
+      await _storageService.saveVideoPath(videoId, mp4Path);
+      print('♻️ Renamed iOS video to playable path: $mp4Path');
+      return mp4Path;
+    } catch (e) {
+      print('Failed to make iOS video playable: $e');
+      return path;
+    }
+  }
+
+  void pauseForProtection() {
+    if (betterPlayerController.value != null && isPlaying.value) {
+      betterPlayerController.value!.pause();
+      isPlaying.value = false;
+      WakelockPlus.disable();
+    }
+  }
+
   Future<void> loadVideo(String videoId) async {
     try {
       isLoading.value = true;
@@ -199,6 +246,9 @@ class VideoController extends GetxController {
           ? await _downloadManager.getLocalVideoPath(videoId)
           : null;
       localFilePath = await _ensurePersistentLocalFile(videoId, localFilePath);
+      if (Platform.isIOS && localFilePath != null) {
+        localFilePath = await _ensureIosPlayablePath(videoId, localFilePath);
+      }
 
       final downloadStatus = _downloadManager.getDownloadStatusString(videoId);
       final isDownloading =

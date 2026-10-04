@@ -399,6 +399,14 @@ class VideoDownloadManager extends GetxController {
         // Only log actual errors, not cancellations
         print('❌ Download error for ${video.id}: $e');
         downloadStatus[video.id] = 'error';
+        final context = Get.context;
+        if (context != null) {
+          ShamraSnackBar.show(
+            context: context,
+            message: 'خطأ: فشل حفظ الفيديو على الجهاز',
+            type: SnackBarType.error,
+          );
+        }
 
         // Clear all tracking data on error
         downloadProgress.remove(video.id);
