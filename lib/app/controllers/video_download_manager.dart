@@ -192,13 +192,6 @@ class VideoDownloadManager extends GetxController {
     final hasPermission = await PermissionManager.requestStoragePermission();
     if (!hasPermission) return false;
 
-    // Check if already downloading (in-memory state; may be set before HTTP starts)
-    if (_ongoingDownloads.containsKey(video.id) ||
-        downloadStatus[video.id] == 'downloading') {
-      print('Video ${video.id} is already downloading');
-      return false;
-    }
-
     print('🚀 Starting download for video: ${video.id}');
 
     // Check for invalid partial downloads and clear them

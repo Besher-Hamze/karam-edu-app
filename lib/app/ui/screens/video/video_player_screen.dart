@@ -129,31 +129,32 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
             InteractiveViewer(
               maxScale: 4.0,
               minScale: 0.5,
-              child: GestureDetector(
-                onTap: controller.toggleControlsVisibility,
-                child: Center(
-                  child: AspectRatio(
-                    aspectRatio: controller.betterPlayerController.value!
-                        .videoPlayerController!.value.aspectRatio,
-                    child: BetterPlayer(
-                      controller: controller.betterPlayerController.value!,
+              child: SizedBox.expand(
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: controller.toggleControlsVisibility,
+                      child: Center(
+                        child: AspectRatio(
+                          aspectRatio: controller.betterPlayerController.value!
+                              .videoPlayerController!.value.aspectRatio,
+                          child: BetterPlayer(
+                            controller: controller.betterPlayerController.value!,
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-              ),
-            ),
-
-            // Controls sit above the player. Back is outside InteractiveViewer
-            // so pinch-zoom cannot steal the tap on iPhone.
-            AnimatedOpacity(
-              opacity: controller.controlsVisible.value ? 1.0 : 0.0,
-              duration: Duration(milliseconds: 300),
-              child: IgnorePointer(
-                ignoring: !controller.controlsVisible.value,
-                child: Container(
-                  color: Colors.black.withOpacity(0.4),
-                  child: Stack(
-                    children: [
+                    AnimatedOpacity(
+                      opacity: controller.controlsVisible.value ? 1.0 : 0.0,
+                      duration: const Duration(milliseconds: 300),
+                      child: IgnorePointer(
+                        ignoring: !controller.controlsVisible.value,
+                        child: Container(
+                          color: Colors.black.withOpacity(0.4),
+                          child: Stack(
+                            children: [
                         // Top right controls
                         Positioned(
                           top: 16,
@@ -331,28 +332,33 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                   ),
                 ),
               ),
+                  ],
+                ),
+              ),
+            ),
 
-              SafeArea(
-                child: Align(
-                  alignment: AlignmentDirectional.topStart,
-                  child: Padding(
-                    padding: const EdgeInsets.all(8),
-                    child: Material(
-                      color: Colors.black54,
-                      shape: const CircleBorder(),
-                      child: IconButton(
-                        iconSize: 28,
-                        tooltip: 'رجوع',
-                        icon: const Icon(
-                          Icons.arrow_back,
-                          color: Colors.white,
-                        ),
-                        onPressed: _leaveVideo,
+            PositionedDirectional(
+              top: 0,
+              start: 0,
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Material(
+                    color: Colors.black54,
+                    shape: const CircleBorder(),
+                    child: IconButton(
+                      iconSize: 28,
+                      tooltip: 'رجوع',
+                      icon: const Icon(
+                        Icons.arrow_back,
+                        color: Colors.white,
                       ),
+                      onPressed: _leaveVideo,
                     ),
                   ),
                 ),
               ),
+            ),
 
               Obx(() => controller.isBuffering.value
                   ? Center(
