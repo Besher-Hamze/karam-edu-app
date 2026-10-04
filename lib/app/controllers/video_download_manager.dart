@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'package:course_platform/app/controllers/permission_manager.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'dart:io';
 import '../data/models/video.dart';
@@ -11,6 +12,9 @@ import '../services/storage_service.dart';
 import '../ui/global_widgets/snackbar.dart';
 
 class VideoDownloadManager extends GetxController {
+  static const MethodChannel _backgroundChannel =
+      MethodChannel('karam/background_download');
+
   final NetworkService _downloadService = Get.find<NetworkService>();
   final VideoRepository _videoRepository = Get.find<VideoRepository>();
   final StorageService _storageService = Get.find<StorageService>();
@@ -32,13 +36,11 @@ class VideoDownloadManager extends GetxController {
 
   // Optional: Add a course ID to track downloads for a specific course
   String? _currentCourseId;
-  
-  // Track if app is in background
-  bool _isAppInBackground = false;
 
   /// Only one active [downloadVideo] per video id. Prevents double taps / parallel
   /// triggers from starting two HTTP downloads and corrupting progress for the same file.
   final Map<String, Future<bool>> _ongoingDownloads = {};
+  final Map<String, int> _autoResumeAttempts = {};
 
   @override
   void onInit() {
@@ -48,95 +50,24 @@ class VideoDownloadManager extends GetxController {
     checkPreviousDownloads();
   }
   
-  // Handle app going to background
   Future<void> handleAppPaused() async {
-    _isAppInBackground = true;
-    print('📱 App paused - handling active downloads');
-    
-    // Get all active downloads
-    final activeDownloads = <String>[];
-    downloadStatus.forEach((videoId, status) {
-      if (status == 'downloading') {
-        activeDownloads.add(videoId);
-      }
-    });
-    
-    // Pause all active downloads
-    for (String videoId in activeDownloads) {
-      print('⏸️ Pausing download due to app background: $videoId');
-      await pauseDownload(videoId);
-    }
+    await _syncIosBackgroundTask();
   }
-  
-  // Handle app resuming from background
+
+  // If iOS suspended the process, continue any download that is no longer running.
   Future<void> handleAppResumed() async {
-    if (!_isAppInBackground) {
-      return; // Already resumed or wasn't paused
-    }
-    
-    _isAppInBackground = false;
-    print('📱 App resumed - checking for paused downloads to resume');
-    
-    // Wait a bit for app to fully resume
-    await Future.delayed(Duration(milliseconds: 500));
-    
-    // Get all paused downloads
-    final pausedDownloads = <String>[];
-    downloadStatus.forEach((videoId, status) {
-      if (status == 'paused' && (isPaused[videoId] == true)) {
-        pausedDownloads.add(videoId);
-      }
-    });
-    
-    // Also check for downloads that were paused due to app going to background
-    // by checking partial download info
-    try {
-      final downloadedList = await _storageService.getDownloadedVideosList();
-      for (String videoId in downloadedList) {
-        final partialInfo = await _storageService.getPartialDownloadInfo(videoId);
-        if (partialInfo != null && !pausedDownloads.contains(videoId)) {
-          final path = await _storageService.getVideoPath(videoId);
-          if (path != null) {
-            final tempFile = File('$path.tmp');
-            if (await tempFile.exists()) {
-              // This is a paused download that wasn't in our status map
-              pausedDownloads.add(videoId);
-              // Restore its state
-              final actualBytes = await tempFile.length();
-              final savedTotal = partialInfo['totalBytes'] as int;
-              downloadedBytes[videoId] = actualBytes;
-              totalBytes[videoId] = savedTotal;
-              downloadStatus[videoId] = 'paused';
-              downloadProgress[videoId] = actualBytes / savedTotal;
-              isPaused[videoId] = true;
-            }
-          }
-        }
-      }
-    } catch (e) {
-      print('Error checking for paused downloads on resume: $e');
-    }
-    
-    // Resume all paused downloads
-    for (String videoId in pausedDownloads) {
-      // Check if download is already complete before resuming
-      final isDownloaded = await isVideoDownloaded(videoId);
-      if (isDownloaded) {
-        print('✅ Download already complete, skipping resume: $videoId');
-        downloadStatus[videoId] = 'completed';
-        downloadedVideos[videoId] = true;
-        isPaused.remove(videoId);
-        continue;
-      }
-      
-      print('▶️ Resuming download after app resume: $videoId');
-      // Use a small delay between resumes to avoid overwhelming the system
-      await Future.delayed(Duration(milliseconds: 300));
-      await resumeDownload(videoId);
-    }
-    
-    if (pausedDownloads.isNotEmpty) {
-      print('✅ Resumed ${pausedDownloads.length} paused download(s)');
+    final activeIds = downloadStatus.entries
+        .where((entry) =>
+            entry.value == 'downloading' && isPaused[entry.key] != true)
+        .map((entry) => entry.key)
+        .toList();
+
+    for (final videoId in activeIds) {
+      if (_ongoingDownloads.containsKey(videoId)) continue;
+      final video = await _videoRepository.getVideoDetails(videoId);
+      if (video == null) continue;
+      downloadStatus[videoId] = 'interrupted';
+      await downloadVideo(video);
     }
   }
 
@@ -262,7 +193,8 @@ class VideoDownloadManager extends GetxController {
     if (!hasPermission) return false;
 
     // Check if already downloading (in-memory state; may be set before HTTP starts)
-    if (downloadStatus[video.id] == 'downloading') {
+    if (_ongoingDownloads.containsKey(video.id) ||
+        downloadStatus[video.id] == 'downloading') {
       print('Video ${video.id} is already downloading');
       return false;
     }
@@ -305,6 +237,7 @@ class VideoDownloadManager extends GetxController {
 
       downloadStatus[video.id] = 'downloading';
       isPaused[video.id] = false;
+      await _syncIosBackgroundTask();
       
       // Don't reset progress if resuming - keep existing values
       if (!downloadedBytes.containsKey(video.id)) {
@@ -374,30 +307,40 @@ class VideoDownloadManager extends GetxController {
               video.id, videoDetails.toJson());
         }
 
+        _autoResumeAttempts.remove(video.id);
+        await _syncIosBackgroundTask();
         return true;
       }
       return false;
     } catch (e) {
-      // Check if it's a cancellation first - don't log as error
-      if (e.toString().contains('cancel') || 
-          (e is DioException && e.type == DioExceptionType.cancel)) {
+      final userPaused = isPaused[video.id] == true ||
+          (e is DioException && e.type == DioExceptionType.cancel) ||
+          e.toString().contains('cancel');
+
+      if (userPaused) {
         downloadStatus[video.id] = 'paused';
         isPaused[video.id] = true;
+        await _persistPartial(video.id);
+        await _syncIosBackgroundTask();
+        print('⏸️ Download paused: ${video.id}');
+        return false;
+      }
 
-        // Only save progress if we have valid tracking data
-        if (downloadedBytes.containsKey(video.id) &&
-            totalBytes.containsKey(video.id) &&
-            totalBytes[video.id]! > 0) {
-          try {
-            await _saveDownloadProgress(video.id, downloadedBytes[video.id]!, totalBytes[video.id]!);
-          } catch (saveError) {
-            print('Error saving progress on pause: $saveError');
-          }
-        }
-        print('⏸️ Download paused due to cancellation: ${video.id}');
+      print('Download interrupted, keeping progress: $e');
+      await _persistPartial(video.id);
+      final attempts = (_autoResumeAttempts[video.id] ?? 0) + 1;
+      _autoResumeAttempts[video.id] = attempts;
+
+      if (attempts <= 8) {
+        downloadStatus[video.id] = 'downloading';
+        Future<void>.delayed(const Duration(seconds: 2), () async {
+          if (isPaused[video.id] == true) return;
+          if (downloadStatus[video.id] == 'completed') return;
+          if (_ongoingDownloads.containsKey(video.id)) return;
+          downloadStatus[video.id] = 'interrupted';
+          await downloadVideo(video);
+        });
       } else {
-        // Only log actual errors, not cancellations
-        print('❌ Download error for ${video.id}: $e');
         downloadStatus[video.id] = 'error';
         final context = Get.context;
         if (context != null) {
@@ -407,18 +350,9 @@ class VideoDownloadManager extends GetxController {
             type: SnackBarType.error,
           );
         }
-
-        // Clear all tracking data on error
-        downloadProgress.remove(video.id);
-        isPaused.remove(video.id);
-        cancelTokens.remove(video.id);
-        downloadedBytes.remove(video.id);
-        totalBytes.remove(video.id);
-
-        // Clear invalid download state
-        await clearInvalidDownload(video.id);
       }
 
+      await _syncIosBackgroundTask();
       return false;
     }
   }
@@ -482,6 +416,31 @@ class VideoDownloadManager extends GetxController {
       print('✅ Cleared invalid download state for: $videoId');
     } catch (e) {
       print('❌ Error clearing invalid download: $e');
+    }
+  }
+
+  Future<void> _persistPartial(String videoId) async {
+    final path = await _storageService.getVideoPath(videoId);
+    if (path == null || path.isEmpty) return;
+    final tempFile = File('$path.tmp');
+    if (!await tempFile.exists()) return;
+    final size = await tempFile.length();
+    final total = totalBytes[videoId] ?? 0;
+    if (size <= 0 || total <= 0 || size > total) return;
+    downloadedBytes[videoId] = size;
+    downloadProgress[videoId] = size / total;
+    await _saveDownloadProgress(videoId, size, total);
+  }
+
+  Future<void> _syncIosBackgroundTask() async {
+    if (!Platform.isIOS) return;
+    final hasActiveDownload =
+        downloadStatus.values.any((status) => status == 'downloading');
+    try {
+      await _backgroundChannel
+          .invokeMethod(hasActiveDownload ? 'begin' : 'end');
+    } catch (e) {
+      print('Background download task update failed: $e');
     }
   }
 
@@ -556,6 +515,7 @@ class VideoDownloadManager extends GetxController {
       }
 
       print('⏸️ Download paused successfully for: $videoId');
+      await _syncIosBackgroundTask();
     } catch (e) {
       print('❌ Error pausing download: $e');
     }
@@ -576,7 +536,7 @@ class VideoDownloadManager extends GetxController {
         8,
         (index) =>
             'abcdefghijklmnopqrstuvwxyz0123456789'[random.nextInt(36)]).join();
-    return 'video_${timestamp}_$randomString.dat';
+    return 'video_${timestamp}_$randomString.mp4';
   }
 
   Future<bool> resumeDownload(String videoId) async {

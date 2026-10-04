@@ -126,9 +126,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     if (Get.isRegistered<VideoDownloadManager>()) {
       final downloadManager = Get.find<VideoDownloadManager>();
       
-      if (state == AppLifecycleState.paused) {
-        // App went to background - pause active downloads
-        print('📱 App went to background - pausing active downloads');
+      if (state == AppLifecycleState.paused ||
+          state == AppLifecycleState.hidden) {
         downloadManager.handleAppPaused();
       } else if (state == AppLifecycleState.resumed) {
         // App returned to foreground - resume paused downloads

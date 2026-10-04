@@ -12,7 +12,49 @@ import Flutter
     GeneratedPluginRegistrant.register(with: self)
     let launched = super.application(application, didFinishLaunchingWithOptions: launchOptions)
     setupScreenGuard()
+    setupBackgroundDownloads()
     return launched
+  }
+
+  private var downloadBackgroundTask: UIBackgroundTaskIdentifier = .invalid
+
+  private func setupBackgroundDownloads() {
+    guard let controller = window?.rootViewController as? FlutterViewController else {
+      return
+    }
+
+    let channel = FlutterMethodChannel(
+      name: "karam/background_download",
+      binaryMessenger: controller.binaryMessenger
+    )
+    channel.setMethodCallHandler { [weak self] call, result in
+      guard let self = self else {
+        result(nil)
+        return
+      }
+      if call.method == "begin" {
+        self.beginDownloadBackgroundTask()
+        result(nil)
+      } else if call.method == "end" {
+        self.endDownloadBackgroundTask()
+        result(nil)
+      } else {
+        result(FlutterMethodNotImplemented)
+      }
+    }
+  }
+
+  private func beginDownloadBackgroundTask() {
+    if downloadBackgroundTask != .invalid { return }
+    downloadBackgroundTask = UIApplication.shared.beginBackgroundTask(withName: "video-download") { [weak self] in
+      self?.endDownloadBackgroundTask()
+    }
+  }
+
+  private func endDownloadBackgroundTask() {
+    if downloadBackgroundTask == .invalid { return }
+    UIApplication.shared.endBackgroundTask(downloadBackgroundTask)
+    downloadBackgroundTask = .invalid
   }
 
   private func setupScreenGuard() {
