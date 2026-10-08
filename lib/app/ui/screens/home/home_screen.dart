@@ -2,16 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../../../controllers/home_controller.dart';
 import '../../theme/color_theme.dart';
+import 'components/ads_carousel.dart';
 import 'components/course_card.dart';
 import 'components/semester_selector.dart';
-import '../../global_widgets/snackbar.dart';
+import '../../global_widgets/unlock_course_dialog.dart';
 
 class HomeScreen extends GetView<HomeController> {
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final textTheme = theme.textTheme;
-
     return Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
@@ -47,7 +45,10 @@ class HomeScreen extends GetView<HomeController> {
       ),
       body: RefreshIndicator(
         onRefresh: () async {
-          await controller.fetchAvailableCourses();
+          await Future.wait([
+            controller.fetchAvailableCourses(),
+            controller.fetchAds(),
+          ]);
         },
         color: ColorTheme.primary,
         child: SingleChildScrollView(
@@ -55,9 +56,17 @@ class HomeScreen extends GetView<HomeController> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildStudentHeader(context),
+              Obx(() => controller.ads.isEmpty
+                  ? SizedBox.shrink()
+                  : Padding(
+                      padding: EdgeInsets.only(top: 16, bottom: 8),
+                      child: AdsCarousel(
+                        ads: controller.ads.toList(),
+                        onAdTap: controller.openAd,
+                      ),
+                    )),
 
-              SizedBox(height: 24),
+              SizedBox(height: 16),
 
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -127,11 +136,14 @@ class HomeScreen extends GetView<HomeController> {
 
                           return CourseCard(
                             course: course,
-                            onTap: () => Get.toNamed(
-                              '/course-detail',
-                              parameters: {'courseId': course.id},
-                            ),
-                            onLockedTap: () => _showUnlockDialog(context, course),
+                            onTap: () async {
+                              await Get.toNamed(
+                                '/course-detail',
+                                parameters: {'courseId': course.id},
+                              );
+                              await controller.fetchAvailableCourses();
+                            },
+                            onUnlockTap: () => showUnlockCourseDialog(context, courseId: course.id),
                             isEnrolled: isAlreadyEnrolled,
                             isAvailable: course.isAvailable ?? false,
                           );
@@ -146,299 +158,6 @@ class HomeScreen extends GetView<HomeController> {
           ),
         ),
       ),
-    );
-  }
-
-  void _showUnlockDialog(BuildContext context, dynamic course) {
-    final TextEditingController codeController = TextEditingController();
-    final RxBool isSubmitting = false.obs;
-
-    Future<void> submitCode() async {
-      final code = codeController.text.trim();
-      if (code.isEmpty) {
-        ShamraSnackBar.show(
-          context: context,
-          message: 'بيانات غير مكتملة: يرجى إدخال الكود أولاً',
-          type: SnackBarType.warning,
-        );
-        return;
-      }
-
-      isSubmitting.value = true;
-
-      try {
-        final result = await controller.redeemEnrollmentCode(code);
-        
-        Get.back();
-        
-        ShamraSnackBar.show(
-          context: context,
-          message: result['message'] ?? (result['success'] ? 'تم التسجيل بنجاح' : 'فشل التحقق من الكود'),
-          type: result['success'] ? SnackBarType.success : SnackBarType.error,
-        );
-      } catch (e) {
-        Get.back();
-        
-        ShamraSnackBar.show(
-          context: context,
-          message: 'حدث خطأ أثناء التحقق من الكود',
-          type: SnackBarType.error,
-        );
-      } finally {
-        isSubmitting.value = false;
-      }
-    }
-
-    Get.dialog(
-      Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        insetPadding: EdgeInsets.symmetric(horizontal: 20),
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(20, 20, 20, 12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    padding: EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: ColorTheme.primary.withOpacity(0.1),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(Icons.lock_outline, color: ColorTheme.primary),
-                  ),
-                  SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'هذا الكورس مقفول',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                        ),
-                        SizedBox(height: 2),
-                        Text(
-                          'أدخل كود الالتحاق أو امسح رمز QR للمتابعة',
-                          style: TextStyle(color: Colors.grey[600], fontSize: 13),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              SizedBox(height: 16),
-              Obx(() => TextField(
-                controller: codeController,
-                textDirection: TextDirection.rtl,
-                textInputAction: TextInputAction.done,
-                enabled: !isSubmitting.value,
-                onSubmitted: (_) => submitCode(),
-                decoration: InputDecoration(
-                  labelText: 'كود الالتحاق',
-                  hintText: 'ادخل الكود هنا',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                  prefixIcon: Icon(Icons.key_outlined),
-                ),
-              )),
-              SizedBox(height: 12),
-              Obx(() => Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: isSubmitting.value ? null : () {
-                        Get.back();
-                        Get.toNamed('/qr-scanner', parameters: {
-                          'courseId': course.id,
-                        });
-                      },
-                      icon: Icon(Icons.qr_code_scanner),
-                      label: Text('مسح QR'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: ColorTheme.primary,
-                        side: BorderSide(color: ColorTheme.primary),
-                      ),
-                    ),
-                  ),
-                  SizedBox(width: 10),
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: isSubmitting.value ? null : submitCode,
-                      icon: isSubmitting.value
-                          ? SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                              ),
-                            )
-                          : Icon(Icons.check_circle_outline),
-                      label: Text(isSubmitting.value ? 'جاري التحقق...' : 'إدخال الكود'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: ColorTheme.primary,
-                      ),
-                    ),
-                  ),
-                ],
-              )),
-              TextButton(
-                onPressed: () => Get.back(),
-                child: Text('إلغاء'),
-              )
-            ],
-          ),
-        ),
-      ),
-      barrierDismissible: true,
-    );
-  }
-
-  // Enhanced student header with better styling
-  Widget _buildStudentHeader(BuildContext context) {
-    return Obx(
-          () => controller.currentStudent.value != null
-          ? Container(
-        width: double.infinity,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              ColorTheme.primary,
-              ColorTheme.primaryDark,
-            ],
-          ),
-        ),
-        child: Stack(
-          children: [
-            // Background decorative elements
-            Positioned(
-              top: 20,
-              right: -50,
-              child: Container(
-                width: 120,
-                height: 120,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.white.withOpacity(0.05),
-                ),
-              ),
-            ),
-            Positioned(
-              bottom: -30,
-              left: -30,
-              child: Container(
-                width: 100,
-                height: 100,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.white.withOpacity(0.05),
-                ),
-              ),
-            ),
-
-            // Main content
-            Padding(
-              padding: EdgeInsets.fromLTRB(20, 24, 20, 32),
-              child: Row(
-                children: [
-                  // Enhanced avatar with border
-                  Container(
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: Colors.white.withOpacity(0.3),
-                        width: 3,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.1),
-                          blurRadius: 10,
-                          offset: Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: CircleAvatar(
-                      radius: 32,
-                      backgroundColor: Colors.white.withOpacity(0.2),
-                      child: Text(
-                        controller.currentStudent.value!.fullName.isNotEmpty
-                            ? controller.currentStudent.value!.fullName[0]
-                            : 'ط',
-                        style: TextStyle(
-                          fontSize: 28,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-                  SizedBox(width: 20),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'مرحباً بك،',
-                          style: TextStyle(
-                            fontSize: 16,
-                            color: Colors.white.withOpacity(0.9),
-                            fontWeight: FontWeight.w400,
-                          ),
-                        ),
-                        SizedBox(height: 4),
-                        Text(
-                          controller.currentStudent.value!.fullName,
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                            height: 1.2,
-                          ),
-                        ),
-                        SizedBox(height: 12),
-                        Container(
-                          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                              color: Colors.white.withOpacity(0.3),
-                              width: 1,
-                            ),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.school_outlined,
-                                size: 16,
-                                color: Colors.white,
-                              ),
-                              SizedBox(width: 6),
-                              Text(
-                                'طالب نشط',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      )
-          : SizedBox(),
     );
   }
 
@@ -571,56 +290,4 @@ class HomeScreen extends GetView<HomeController> {
     ));
   }
 
-  // Stat card for student header
-  Widget _buildStatCard(
-      {required IconData icon, required String label, required String value}) {
-    return Expanded(
-      child: Container(
-        padding: EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.15),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          children: [
-            Container(
-              padding: EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(
-                icon,
-                size: 20,
-                color: Colors.white,
-              ),
-            ),
-            SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    value,
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.white.withOpacity(0.9),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }

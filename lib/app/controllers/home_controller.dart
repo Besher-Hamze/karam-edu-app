@@ -1,29 +1,37 @@
 import 'package:get/get.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../data/repositories/course_repository.dart';
 import '../data/repositories/video_repository.dart';
 import '../data/repositories/enrollment_repository.dart';
+import '../data/repositories/ad_repository.dart';
+import '../data/models/ad.dart';
 import '../data/models/course.dart';
 import '../data/models/enrollment.dart';
 import '../data/models/student.dart';
 import '../services/storage_service.dart';
 import '../ui/global_widgets/snackbar.dart';
+import '../ui/screens/home/components/ad_preview_overlay.dart';
 
 class HomeController extends GetxController {
   final CourseRepository _courseRepository;
   final VideoRepository _videoRepository;
   final EnrollmentRepository _enrollmentRepository;
+  final AdRepository _adRepository;
   final StorageService _storageService;
 
   HomeController({
     required CourseRepository courseRepository,
     required VideoRepository videoRepository,
     required EnrollmentRepository enrollmentRepository,
+    required AdRepository adRepository,
     required StorageService storageService,
   })  : _courseRepository = courseRepository,
         _videoRepository = videoRepository,
         _enrollmentRepository = enrollmentRepository,
+        _adRepository = adRepository,
         _storageService = storageService;
 
+  final RxList<Ad> ads = <Ad>[].obs;
   final RxList<Enrollment> enrolledCourses = <Enrollment>[].obs;
   final RxList<Course> availableCourses = <Course>[].obs;
   final RxBool isLoadingEnrolled = true.obs;
@@ -52,6 +60,41 @@ class HomeController extends GetxController {
       currentSemester.value = 1;
 
       fetchAvailableCourses();
+      fetchAds();
+    }
+  }
+
+  Future<void> fetchAds() async {
+    try {
+      ads.value = await _adRepository.getAds();
+    } catch (e) {
+      print('Error fetching ads: $e');
+    }
+  }
+
+  void openAd(Ad ad) {
+    final context = Get.context;
+    if (context == null) return;
+    AdPreviewOverlay.show(
+      context,
+      ad: ad,
+      onWhatsApp: () => openAdWhatsApp(ad),
+    );
+  }
+
+  Future<void> openAdWhatsApp(Ad ad) async {
+    final uri = Uri.tryParse(ad.whatsappUrl);
+    final opened = uri != null &&
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!opened) {
+      final context = Get.context;
+      if (context != null) {
+        ShamraSnackBar.show(
+          context: context,
+          message: 'تعذر فتح واتساب، تأكد من تثبيت التطبيق',
+          type: SnackBarType.error,
+        );
+      }
     }
   }
 

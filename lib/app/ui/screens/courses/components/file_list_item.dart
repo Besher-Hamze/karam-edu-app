@@ -174,6 +174,15 @@ class FileListItem extends StatelessWidget {
                             ],
                           ),
                         );
+                      } else if (file.isLocked) {
+                        return Container(
+                          decoration: BoxDecoration(
+                            color: Colors.grey[200],
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          padding: EdgeInsets.all(8),
+                          child: Icon(Icons.lock_rounded, color: Colors.grey[600], size: 24),
+                        );
                       } else {
                         return Container(
                           decoration: BoxDecoration(

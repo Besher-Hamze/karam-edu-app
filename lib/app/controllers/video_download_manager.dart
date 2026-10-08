@@ -179,9 +179,34 @@ class VideoDownloadManager extends GetxController {
     }
   }
 
+  /// Videos download one at a time; also counts a video waiting between auto-retries.
+  bool _isAnotherDownloadActive(String videoId) {
+    if (_ongoingDownloads.keys.any((id) => id != videoId)) return true;
+    return downloadStatus.entries.any((entry) =>
+        entry.key != videoId &&
+        (entry.value == 'downloading' || entry.value == 'interrupted') &&
+        isPaused[entry.key] != true);
+  }
+
+  bool _rejectIfBusy(String videoId) {
+    if (!_isAnotherDownloadActive(videoId)) return false;
+    final context = Get.context;
+    if (context != null) {
+      ShamraSnackBar.show(
+        context: context,
+        message: 'يوجد فيديو قيد التنزيل، انتظر حتى ينتهي ثم حمّل التالي',
+        type: SnackBarType.warning,
+      );
+    }
+    return true;
+  }
+
   /// Download a single video. Concurrent calls for the same video share one download.
   Future<bool> downloadVideo(Video video) {
     final id = video.id;
+    final ongoing = _ongoingDownloads[id];
+    if (ongoing != null) return ongoing;
+    if (_rejectIfBusy(id)) return Future.value(false);
     return _ongoingDownloads.putIfAbsent(id, () {
       final future = _downloadVideoImpl(video);
       return future.whenComplete(() => _ongoingDownloads.remove(id));
@@ -259,14 +284,6 @@ class VideoDownloadManager extends GetxController {
           downloadedBytes[video.id] = received;
           totalBytes[video.id] = total;
           downloadProgress[video.id] = received / total;
-
-          if (received >= total) {
-            downloadStatus[video.id] = 'completed';
-            downloadedVideos[video.id] = true;
-            isPaused[video.id] = false;
-            cancelTokens.remove(video.id);
-            _storageService.removePartialDownloadInfo(video.id);
-          }
         },
         onStatusChange: (status) {
           print('📱 Status change for ${video.id}: $status');
@@ -290,6 +307,11 @@ class VideoDownloadManager extends GetxController {
       }
 
       if (localPath != null) {
+        downloadStatus[video.id] = 'completed';
+        downloadedVideos[video.id] = true;
+        downloadProgress[video.id] = 1.0;
+        isPaused[video.id] = false;
+        cancelTokens.remove(video.id);
         downloadedVideoFiles[video.id] = localPath;
         await _storageService.saveVideoPath(video.id, localPath);
         await _storageService.addVideoToDownloadedList(video.id);
@@ -559,6 +581,8 @@ class VideoDownloadManager extends GetxController {
         print('Cannot resume - video is not paused (status: ${downloadStatus[videoId]})');
         return false;
       }
+
+      if (_rejectIfBusy(videoId)) return false;
 
       // Get video details to resume download
       final videoDetails = await _videoRepository.getVideoDetails(videoId);

@@ -11,6 +11,7 @@ class VideoListItem extends StatelessWidget {
   final int? index;
   final bool isWatched;
   final bool showDownloadOption;
+  final bool showFreeBadge;
 
   const VideoListItem({
     Key? key,
@@ -19,6 +20,7 @@ class VideoListItem extends StatelessWidget {
     this.index,
     this.isWatched = false,
     this.showDownloadOption = true,
+    this.showFreeBadge = false,
   }) : super(key: key);
 
   @override
@@ -65,27 +67,32 @@ class VideoListItem extends StatelessWidget {
                           width: 48,
                           height: 48,
                           decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [
-                                ColorTheme.primary,
-                                ColorTheme.primary.withOpacity(0.8),
-                              ],
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                            ),
+                            gradient: video.isLocked
+                                ? null
+                                : LinearGradient(
+                                    colors: [
+                                      ColorTheme.primary,
+                                      ColorTheme.primary.withOpacity(0.8),
+                                    ],
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                  ),
+                            color: video.isLocked ? Colors.grey[300] : null,
                             borderRadius: BorderRadius.circular(12),
-                            boxShadow: [
-                              BoxShadow(
-                                color: ColorTheme.primary.withOpacity(0.3),
-                                blurRadius: 8,
-                                offset: Offset(0, 3),
-                              ),
-                            ],
+                            boxShadow: video.isLocked
+                                ? null
+                                : [
+                                    BoxShadow(
+                                      color: ColorTheme.primary.withOpacity(0.3),
+                                      blurRadius: 8,
+                                      offset: Offset(0, 3),
+                                    ),
+                                  ],
                           ),
                           child: Icon(
-                            Icons.play_arrow_rounded,
-                            color: Colors.white,
-                            size: 28,
+                            video.isLocked ? Icons.lock_rounded : Icons.play_arrow_rounded,
+                            color: video.isLocked ? Colors.grey[600] : Colors.white,
+                            size: video.isLocked ? 22 : 28,
                           ),
                         ),
                         const SizedBox(width: 16),
@@ -160,6 +167,24 @@ class VideoListItem extends StatelessWidget {
                                   ),
 
                                   SizedBox(width: 8),
+
+                                  if (showFreeBadge)
+                                    Container(
+                                      margin: EdgeInsets.only(left: 6),
+                                      padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: Colors.green,
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: Text(
+                                        'مجانية',
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
 
                                   // Watched Status
                                   if (isWatched)

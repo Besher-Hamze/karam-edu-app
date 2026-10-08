@@ -63,7 +63,8 @@ void main() async {
       } else if (Platform.isAndroid && await SafeDevice.isOnExternalStorage) {
         isSafeDevice = false;
         securityIssue = "تخزين خارجي";
-      } else if (Platform.isAndroid &&
+      } 
+      else if (Platform.isAndroid &&
           await SafeDevice.isDevelopmentModeEnable) {
         isSafeDevice = false;
         securityIssue = "وضع المطور";

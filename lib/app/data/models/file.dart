@@ -6,6 +6,7 @@ class CourseFile {
   final String course;
   final String fileType;
   final DateTime? createdAt;
+  final bool isLocked;
 
   CourseFile({
     required this.id,
@@ -15,6 +16,7 @@ class CourseFile {
     required this.course,
     required this.fileType,
     this.createdAt,
+    this.isLocked = false,
   });
 
   factory CourseFile.fromJson(Map<String, dynamic> json) {
@@ -43,6 +45,7 @@ class CourseFile {
       course: json['course'],
       fileType: json['fileType'],
       createdAt: json['createdAt'] != null ? DateTime.parse(json['createdAt']) : null,
+      isLocked: json['isLocked'] == true,
     );
   }
 

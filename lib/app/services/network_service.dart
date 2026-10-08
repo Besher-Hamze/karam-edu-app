@@ -235,6 +235,20 @@ class NetworkService extends GetxService {
     }
   }
 
+  /// FileMode.write empties the file on open, so truncating through it zero-fills the data.
+  Future<void> _truncateFile(File file, int length) async {
+    final raf = await file.open(mode: FileMode.append);
+    try {
+      await raf.truncate(length);
+    } finally {
+      await raf.close();
+    }
+    final size = await file.length();
+    if (size != length) {
+      throw Exception('Failed to truncate file to $length bytes (got $size)');
+    }
+  }
+
   Future<bool> _canWriteToDirectory(Directory dir) async {
     final testFile = File('${dir.path}/.perm_check_${DateTime.now().microsecondsSinceEpoch}');
     try {
@@ -461,92 +475,31 @@ class NetworkService extends GetxService {
             print('🗑️ Deleted invalid temp file');
           }
         } else {
-          // Check if temp file exists and matches saved progress
+          // The bytes on disk are the only source of truth: saved progress lags behind the
+          // file (it is written every few seconds), and resuming from it duplicates data.
           final tempFile = File(tempFilePath);
           if (await tempFile.exists()) {
             final actualSize = await tempFile.length();
-            
-            // CRITICAL: Validate file size is reasonable
-            if (actualSize > savedTotalBytes * 1.1) {
-              // File is significantly larger (more than 10%) - likely corrupted
-              print('⚠️ Temp file is significantly larger than expected total! File may be corrupted.');
-              print('   File size: ${actualSize / 1024 / 1024} MB');
-              print('   Expected total: ${savedTotalBytes / 1024 / 1024} MB');
+
+            if (actualSize > savedTotalBytes || actualSize == 0) {
+              print('⚠️ Temp file size $actualSize is invalid for total $savedTotalBytes, restarting');
               await tempFile.delete();
               await _storageService.removePartialDownloadInfo(videoId);
               startByte = 0;
-            } else if (actualSize >= savedTotalBytes * 0.95) {
-              // File is 95%+ of expected size - might be complete
-              print('⚠️ Temp file is close to completion (${(actualSize / savedTotalBytes * 100).toStringAsFixed(1)}%)');
-              
-              // CRITICAL: If file is at or very close to expected size, verify it's complete
-              if (actualSize >= savedTotalBytes - 1024) { // Within 1KB of expected
-                print('✅ Temp file appears complete (${actualSize} bytes, expected ${savedTotalBytes} bytes)');
-                print('   Verifying and finalizing download...');
-                
-                // Verify file is actually complete by checking if we can read the end
-                try {
-                  final verifyRaf = await tempFile.open(mode: FileMode.read);
-                  await verifyRaf.setPosition(actualSize - 1);
-                  final lastByte = await verifyRaf.read(1);
-                  await verifyRaf.close();
-                  
-                  if (lastByte.isNotEmpty) {
-                    // File appears complete - rename it and mark as complete
-                    print('✅ File verification passed, finalizing...');
-                    
-                    // Wait a bit to ensure file is fully written
-                    await Future.delayed(Duration(milliseconds: 200));
-                    
-                    // Rename temp to final
-                    await _moveTempToFinal(tempFile, filePath);
-                    final finalFile = File(filePath);
-                    if (await finalFile.exists()) {
-                      final finalSize = await finalFile.length();
-                      await _storageService.saveVideoPath(videoId, filePath);
-                      await _storageService.addVideoToDownloadedList(videoId);
-                      await _storageService.removePartialDownloadInfo(videoId);
-                      onProgress(finalSize, finalSize);
-                      onStatusChange?.call('completed');
-                      print('✅ Download complete: ${finalSize / 1024 / 1024} MB');
-                      return filePath;
-                    } else {
-                      print('⚠️ Rename failed, file does not exist at final path');
-                    }
-                  } else {
-                    print('⚠️ Could not read last byte, file may be incomplete');
-                  }
-                } catch (e) {
-                  print('⚠️ File verification failed: $e, will resume from actual size');
-                }
-              }
-              
-              // File is close but not complete - resume from actual size
-              // CRITICAL: Don't truncate - use actual size to avoid corruption
-              startByte = actualSize;
-              totalBytes = savedTotalBytes;
-              print('🔄 Resuming from actual file size: $startByte bytes (${(startByte / savedTotalBytes * 100).toStringAsFixed(1)}% complete)');
-            } else if (actualSize < savedDownloaded) {
-              // File is smaller than saved progress - use actual size
-              print('⚠️ Temp file is smaller than saved progress');
-              print('   File size: ${actualSize / 1024 / 1024} MB');
-              print('   Saved progress: ${savedDownloaded / 1024 / 1024} MB');
-              startByte = actualSize;
-              totalBytes = savedTotalBytes;
-              print('🔄 Resuming from actual file size: $startByte bytes');
+            } else if (actualSize == savedTotalBytes) {
+              print('✅ Temp file is complete ($actualSize bytes), finalizing');
+              await _moveTempToFinal(tempFile, filePath);
+              await _storageService.saveVideoPath(videoId, filePath);
+              await _storageService.addVideoToDownloadedList(videoId);
+              await _storageService.removePartialDownloadInfo(videoId);
+              onProgress(actualSize, actualSize);
+              onStatusChange?.call('completed');
+              return filePath;
             } else {
-              // Use the smaller of actual size or saved progress to be safe
-              startByte = actualSize < savedDownloaded ? actualSize : savedDownloaded;
+              startByte = actualSize;
               totalBytes = savedTotalBytes;
-
-              if (startByte > 0) {
-                print('🔄 Resuming download from byte: $startByte (${startByte / 1024 / 1024} MB)');
-                print('   Total expected: ${totalBytes / 1024 / 1024} MB');
-              } else {
-                print('⚠️ Temp file exists but has 0 bytes, starting fresh');
-                await tempFile.delete();
-                await _storageService.removePartialDownloadInfo(videoId);
-              }
+              print('🔄 Resuming download from byte: $startByte (${startByte / 1024 / 1024} MB)');
+              print('   Total expected: ${totalBytes / 1024 / 1024} MB');
             }
           } else {
             print('⚠️ Partial info exists but no temp file found, starting fresh');
@@ -638,14 +591,16 @@ class NetworkService extends GetxService {
         final tempFile = File(tempFilePath);
         if (await tempFile.exists()) {
           final tempSize = await tempFile.length();
-          if (tempSize > 1024) {
+          if (savedTotalBytes > 0 && tempSize == savedTotalBytes) {
             await _moveTempToFinal(tempFile, filePath);
             final finalSize = await finalFile.length();
             onProgress(finalSize, finalSize);
             await _storageService.removePartialDownloadInfo(videoId);
             return filePath;
           }
+          await tempFile.delete();
         }
+        await _storageService.removePartialDownloadInfo(videoId);
         throw Exception('Range not satisfiable and no valid temp file exists');
       }
 
@@ -688,9 +643,10 @@ class NetworkService extends GetxService {
               // Truncate temp file to match server position
               final tempFile = File(tempFilePath);
               if (await tempFile.exists()) {
-                final rafTemp = await tempFile.open(mode: FileMode.write);
-                await rafTemp.truncate(startByte);
-                await rafTemp.close();
+                if (await tempFile.length() < startByte) {
+                  throw Exception('Server resumed past the end of the local file');
+                }
+                await _truncateFile(tempFile, startByte);
                 print('✂️ Truncated temp file to: $startByte bytes');
               }
             }
@@ -738,125 +694,26 @@ class NetworkService extends GetxService {
       // Create temp file and open for writing
       final tempFile = File(tempFilePath);
 
-      // CRITICAL: Ensure temp file state matches startByte
-      // Always use actual file size as source of truth when resuming
-      if (await tempFile.exists()) {
-        try {
-          final actualSize = await tempFile.length();
-          
-          // CRITICAL: If file is already at or beyond expected size, don't resume - finalize it
-          if (totalBytes > 0 && actualSize >= totalBytes - 1024) {
-            print('✅ Temp file is already complete (${actualSize} bytes, expected ${totalBytes} bytes)');
-            print('   Finalizing download without resuming...');
-            
-            // Verify file is readable and complete
-            try {
-              final verifyRaf = await tempFile.open(mode: FileMode.read);
-              await verifyRaf.setPosition(actualSize - 1);
-              final lastByte = await verifyRaf.read(1);
-              await verifyRaf.close();
-              
-              if (lastByte.isNotEmpty) {
-                // File is complete - rename and finalize
-                await _moveTempToFinal(tempFile, filePath);
-                final finalFile = File(filePath);
-                if (await finalFile.exists()) {
-                  final finalSize = await finalFile.length();
-                  await _storageService.saveVideoPath(videoId, filePath);
-                  await _storageService.addVideoToDownloadedList(videoId);
-                  await _storageService.removePartialDownloadInfo(videoId);
-                  onProgress(finalSize, finalSize);
-                  onStatusChange?.call('completed');
-                  print('✅ Download finalized: ${finalSize / 1024 / 1024} MB');
-                  return filePath;
-                }
-              }
-            } catch (e) {
-              print('⚠️ File verification failed: $e, will try to resume');
-            }
-          }
-          
-          if (actualSize != startByte) {
-            print('⚠️ Temp file size mismatch!');
-            print('   Actual: $actualSize, Expected: $startByte');
-            print('   Difference: ${actualSize - startByte} bytes (${(actualSize - startByte) / 1024} KB)');
-            
-            if (startByte == 0) {
-              // Should start fresh - delete temp
-              await tempFile.delete();
-              print('🗑️ Deleted mismatched temp file for fresh start');
-            } else if (actualSize > startByte) {
-              // File is larger than saved progress - use actual size
-              // This happens when buffered writes weren't accounted for in saved progress
-              print('✅ File is larger than saved progress - using actual file size');
-              print('   This ensures we resume from the correct position');
-              startByte = actualSize;
-              
-              // Update saved progress to match actual file size
-              await _storageService.savePartialDownloadInfo(videoId, actualSize, totalBytes);
-              print('💾 Updated saved progress to match actual file size: ${actualSize / 1024 / 1024} MB');
-            } else if (actualSize < startByte) {
-              // Temp file is smaller - use actual size
-              print('⚠️ Temp file smaller than saved progress, using actual file size');
-              startByte = actualSize;
-              
-              // Update saved progress to match actual file size
-              await _storageService.savePartialDownloadInfo(videoId, actualSize, totalBytes);
-              print('💾 Updated saved progress to match actual file size: ${actualSize / 1024 / 1024} MB');
-            }
-          }
-        } catch (e) {
-          print('⚠️ Error checking temp file size: $e');
-          // If we can't read the file, delete it and start fresh
-          try {
-            await tempFile.delete();
-            print('🗑️ Deleted temp file due to error');
-            startByte = 0;
-          } catch (deleteError) {
-            print('❌ Error deleting temp file: $deleteError');
-          }
+      // The request was already made from startByte, so the file must be made to match it,
+      // never the other way round (moving startByte here appends bytes at the wrong offset).
+      if (startByte == 0) {
+        if (await tempFile.exists()) {
+          await tempFile.delete();
+        }
+      } else {
+        final actualSize = await tempFile.exists() ? await tempFile.length() : 0;
+        if (actualSize < startByte) {
+          await _storageService.savePartialDownloadInfo(videoId, actualSize, totalBytes);
+          throw Exception('Temp file shrank to $actualSize bytes, expected $startByte');
+        }
+        if (actualSize > startByte) {
+          print('✂️ Truncating temp file from $actualSize to resume position $startByte');
+          await _truncateFile(tempFile, startByte);
         }
       }
 
-      // CRITICAL: Always create/ensure file exists before opening
       if (!await tempFile.exists()) {
         await tempFile.create(recursive: true);
-      }
-
-      // CRITICAL FIX: When resuming, we MUST ensure the file is exactly the size we expect
-      // before opening it. This prevents corruption from multiple resume operations.
-      if (startByte > 0) {
-        // Resuming - ensure file is exactly startByte bytes
-        final actualSize = await tempFile.length();
-        
-        if (actualSize != startByte) {
-          print('⚠️ File size mismatch before resume!');
-          print('   Actual: $actualSize bytes, Expected: $startByte bytes');
-          
-          if (actualSize > startByte) {
-            // File is larger than expected - truncate to exact position
-            print('✂️ Truncating file to exact resume position: $startByte bytes');
-            final truncateRaf = await tempFile.open(mode: FileMode.write);
-            await truncateRaf.truncate(startByte);
-            await truncateRaf.close();
-            
-            // Verify truncation worked
-            final verifySize = await tempFile.length();
-            if (verifySize != startByte) {
-              print('❌ Truncation failed! File size: $verifySize, Expected: $startByte');
-              throw Exception('Failed to truncate file to resume position');
-            }
-            print('✅ File truncated successfully to: $startByte bytes');
-          } else {
-            // File is smaller - this shouldn't happen after our checks above
-            // Use actual size as the resume position
-            print('⚠️ File is smaller than expected, using actual size: $actualSize bytes');
-            startByte = actualSize;
-            await _storageService.savePartialDownloadInfo(videoId, actualSize, totalBytes);
-          }
-        } else {
-          print('✅ File size matches resume position: $startByte bytes');
-        }
       }
 
       // CRITICAL: Open file in append mode when resuming, write mode for fresh downloads
@@ -975,12 +832,14 @@ class NetworkService extends GetxService {
         throw Exception('Download incomplete: $finalSize/$totalBytes bytes');
       }
 
-      // Additional verification - check file size matches total
-      if ((finalSize - totalBytes).abs() > 1024) { // Allow 1KB tolerance
-        print('⚠️ Warning: File size mismatch detected');
-        print('   Downloaded: $finalSize bytes');
-        print('   Expected: $totalBytes bytes');
-        throw Exception('Download size verification failed: $finalSize != $totalBytes');
+      if (finalSize != totalBytes) {
+        // Larger than the video means bytes were written twice; the file can't be repaired.
+        final message = 'Download size verification failed: $finalSize != $totalBytes';
+        print('❌ $message, discarding and restarting');
+        await tempFile.delete();
+        await _storageService.removePartialDownloadInfo(videoId);
+        totalBytes = 0;
+        throw Exception(message);
       }
 
       // CRITICAL: Ensure file is fully written before rename
@@ -1002,7 +861,7 @@ class NetworkService extends GetxService {
         final verifySize = await finalFile.length();
         print('✅ Renamed file verified: ${verifySize / 1024 / 1024} MB');
         
-        if (verifySize < totalBytes - 1024) { // Allow 1KB tolerance
+        if (verifySize != totalBytes) {
           throw Exception('Renamed file is corrupted: $verifySize/$totalBytes bytes');
         }
       } else {
@@ -1059,14 +918,9 @@ class NetworkService extends GetxService {
                   await _storageService.savePartialDownloadInfo(videoId, currentSize, totalBytes);
                   print('💾 Saved actual file progress: ${currentSize / 1024 / 1024} MB / ${totalBytes / 1024 / 1024} MB');
                 } else {
-                  // File is larger than expected - this should not happen, but truncate to be safe
-                  print('⚠️ File size ($currentSize) exceeds expected total ($totalBytes), truncating...');
-                  final rafTemp = await tempFile.open(mode: FileMode.write);
-                  await rafTemp.truncate(totalBytes);
-                  await rafTemp.close();
-                  final newSize = await tempFile.length();
-                  await _storageService.savePartialDownloadInfo(videoId, newSize, totalBytes);
-                  print('💾 Saved truncated progress: ${newSize / 1024 / 1024} MB / ${totalBytes / 1024 / 1024} MB');
+                  print('⚠️ File size ($currentSize) exceeds expected total ($totalBytes), discarding');
+                  await tempFile.delete();
+                  await _storageService.removePartialDownloadInfo(videoId);
                 }
               }
             }
@@ -1103,14 +957,9 @@ class NetworkService extends GetxService {
               await _storageService.savePartialDownloadInfo(videoId, currentSize, totalBytes);
               print('💾 Saved actual file progress: ${currentSize / 1024 / 1024} MB / ${totalBytes / 1024 / 1024} MB');
             } else if (currentSize > totalBytes) {
-              // File is larger than expected - truncate it
-              print('⚠️ File size exceeds expected total, truncating...');
-              final rafTemp = await tempFile.open(mode: FileMode.write);
-              await rafTemp.truncate(totalBytes);
-              await rafTemp.close();
-              final newSize = await tempFile.length();
-              await _storageService.savePartialDownloadInfo(videoId, newSize, totalBytes);
-              print('💾 Saved truncated progress: ${newSize / 1024 / 1024} MB / ${totalBytes / 1024 / 1024} MB');
+              print('⚠️ File size exceeds expected total, discarding');
+              await tempFile.delete();
+              await _storageService.removePartialDownloadInfo(videoId);
             }
           } else {
             print('⚠️ Temp file does not exist, cannot save progress');
@@ -1142,7 +991,10 @@ class NetworkService extends GetxService {
           final tempFile = File(tempFilePath);
           if (await tempFile.exists()) {
             final currentSize = await tempFile.length();
-            if (currentSize > 0) {
+            if (currentSize > totalBytes) {
+              await tempFile.delete();
+              await _storageService.removePartialDownloadInfo(videoId);
+            } else if (currentSize > 0) {
               await _storageService.savePartialDownloadInfo(videoId, currentSize, totalBytes);
               print('💾 Saved current progress: ${currentSize / 1024 / 1024} MB');
             }

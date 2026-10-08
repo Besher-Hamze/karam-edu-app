@@ -3,6 +3,8 @@ import 'package:get/get.dart';
 import '../../../controllers/course_controller.dart';
 import '../../theme/color_theme.dart';
 import '../../global_widgets/snackbar.dart';
+import '../../global_widgets/network_cover_image.dart';
+import '../../global_widgets/unlock_course_dialog.dart';
 import 'components/video_list_item.dart';
 import 'components/file_list_item.dart';
 
@@ -16,15 +18,7 @@ class CourseDetailScreen extends GetView<CourseController> {
         backgroundColor: Colors.grey[50],
         body: RefreshIndicator(
           color: ColorTheme.primary,
-          onRefresh: () async {
-            final String? courseId = Get.parameters['courseId'];
-            if (courseId != null) {
-              await controller.fetchCourseDetails(courseId);
-              await controller.fetchCourseVideos(courseId);
-              await controller.fetchCourseFiles(courseId);
-              await controller.reloadWatchedVideos();
-            }
-          },
+          onRefresh: controller.refreshCourse,
           child: Obx(() => controller.isLoadingDetails.value && controller.courseDetails.value == null
               ? _buildLoadingState()
               : controller.courseDetails.value == null
@@ -38,6 +32,9 @@ class CourseDetailScreen extends GetView<CourseController> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       _buildCourseDetailsCard(context),
+                      Obx(() => controller.isCourseLocked
+                          ? _buildLockedBanner(context)
+                          : SizedBox.shrink()),
                       SizedBox(height: 16),
                     ],
                   ),
@@ -77,27 +74,34 @@ class CourseDetailScreen extends GetView<CourseController> {
         background: Stack(
           fit: StackFit.expand,
           children: [
-            Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topRight,
-                  end: Alignment.bottomLeft,
-                  colors: [
-                    ColorTheme.primary,
-                    ColorTheme.primaryDark,
-                  ],
-                ),
-              ),
-            ),
-
-            // Course icon overlay
-            Center(
-              child: Icon(
-                _getCourseIcon(),
-                size: 80,
-                color: Colors.white.withOpacity(0.3),
-              ),
-            ),
+            Obx(() => NetworkCoverImage(
+                  url: controller.courseDetails.value?.coverLargeUrl,
+                  cacheKey: controller.courseDetails.value?.coverLarge,
+                  fallback: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topRight,
+                            end: Alignment.bottomLeft,
+                            colors: [
+                              ColorTheme.primary,
+                              ColorTheme.primaryDark,
+                            ],
+                          ),
+                        ),
+                      ),
+                      Center(
+                        child: Icon(
+                          _getCourseIcon(),
+                          size: 80,
+                          color: Colors.white.withOpacity(0.3),
+                        ),
+                      ),
+                    ],
+                  ),
+                )),
 
             // Gradient overlay for better text readability
             Container(
@@ -312,7 +316,12 @@ class CourseDetailScreen extends GetView<CourseController> {
                   video: video,
                   index: index + 1,
                   isWatched: controller.isVideoWatched(video.id),
+                  showFreeBadge: video.isFree && controller.isCourseLocked,
                   onTap: () async {
+                    if (video.isLocked) {
+                      _showUnlockDialog(context);
+                      return;
+                    }
                     // Navigate to video player
                     await Get.toNamed(
                       '/video-player',
@@ -321,7 +330,7 @@ class CourseDetailScreen extends GetView<CourseController> {
                     // Reload watched status after returning from video player
                     await controller.reloadWatchedVideos();
                   },
-                  showDownloadOption: true,
+                  showDownloadOption: !video.isLocked,
                 ));
               },
             ),
@@ -345,6 +354,10 @@ class CourseDetailScreen extends GetView<CourseController> {
                   file: file,
                   isDownloaded: controller.isFileDownloaded(file.id),
                   onTap: () async {
+                    if (file.isLocked) {
+                      _showUnlockDialog(context);
+                      return;
+                    }
                     final isDownloaded = await controller.isFileDownloaded(file.id);
 
                     if (isDownloaded) {
@@ -389,6 +402,66 @@ class CourseDetailScreen extends GetView<CourseController> {
             ),
         ),
       ],
+    );
+  }
+
+  void _showUnlockDialog(BuildContext context) {
+    final String? courseId = Get.parameters['courseId'];
+    if (courseId == null) return;
+    showUnlockCourseDialog(context, courseId: courseId, onUnlocked: controller.refreshCourse);
+  }
+
+  Widget _buildLockedBanner(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Container(
+        padding: EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.orange.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.orange.withOpacity(0.3)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.15),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.lock_rounded, color: Colors.orange[800], size: 22),
+            ),
+            SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'الكورس مقفل',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.orange[900]),
+                  ),
+                  SizedBox(height: 2),
+                  Text(
+                    'يمكنك مشاهدة أول محاضرة مجاناً، فعّل الكورس لفتح باقي المحاضرات والملفات',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[700], height: 1.4),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(width: 8),
+            ElevatedButton(
+              onPressed: () => _showUnlockDialog(context),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: ColorTheme.primary,
+                foregroundColor: Colors.white,
+                padding: EdgeInsets.symmetric(horizontal: 16),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              child: Text('تفعيل'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

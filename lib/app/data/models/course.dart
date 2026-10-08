@@ -15,6 +15,14 @@ class Course {
   /// May be omitted by the API; use [displayTeacherName] for UI.
   final String? teacherName;
 
+  /// Storage keys; stable per uploaded image, so they double as image cache keys.
+  final String? coverSmall;
+  final String? coverLarge;
+
+  /// Signed URLs; they change on every request and expire.
+  final String? coverSmallUrl;
+  final String? coverLargeUrl;
+
   Course(
       {required this.id,
       required this.name,
@@ -24,7 +32,11 @@ class Course {
       this.createdAt,
       this.updatedAt,
       this.isAvailable,
-      this.teacherName});
+      this.teacherName,
+      this.coverSmall,
+      this.coverLarge,
+      this.coverSmallUrl,
+      this.coverLargeUrl});
 
   /// Teacher label for UI: [teacherName] when set, except [apiPlatformOwnerFullName] → [defaultTeacherName].
   String get displayTeacherName {
@@ -47,6 +59,10 @@ class Course {
           json['updatedAt'] != null ? DateTime.parse(json['updatedAt']) : null,
       isAvailable: json['isAvailable'] != null ? json['isAvailable'] : false,
       teacherName: _parseTeacherFromJson(json['teacherName']),
+      coverSmall: json['coverSmall'],
+      coverLarge: json['coverLarge'],
+      coverSmallUrl: json['coverSmallUrl'],
+      coverLargeUrl: json['coverLargeUrl'],
     );
   }
 
@@ -76,6 +92,10 @@ class Course {
       'updatedAt': updatedAt?.toIso8601String(),
       'isAvailable': isAvailable ?? false,
       if (teacherName != null) 'teacherName': teacherName,
+      if (coverSmall != null) 'coverSmall': coverSmall,
+      if (coverLarge != null) 'coverLarge': coverLarge,
+      if (coverSmallUrl != null) 'coverSmallUrl': coverSmallUrl,
+      if (coverLargeUrl != null) 'coverLargeUrl': coverLargeUrl,
     };
   }
 }

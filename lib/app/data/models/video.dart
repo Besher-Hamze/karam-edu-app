@@ -11,6 +11,12 @@ class Video {
   final int? order;
   final DateTime? createdAt;
 
+  /// The course's first lesson, open to every student.
+  final bool isFree;
+
+  /// The student isn't enrolled and this isn't the free lesson.
+  final bool isLocked;
+
   Video({
     required this.id,
     required this.title,
@@ -21,6 +27,8 @@ class Video {
     this.duration,
     this.order,
     this.createdAt,
+    this.isFree = false,
+    this.isLocked = false,
   });
 
   factory Video.fromJson(Map<String, dynamic> json) {
@@ -54,6 +62,8 @@ class Video {
       order: json['order'],
       createdAt:
           json['createdAt'] != null ? DateTime.parse(json['createdAt']) : null,
+      isFree: json['isFree'] == true,
+      isLocked: json['isLocked'] == true,
     );
   }
   Map<String, dynamic> toJson() {
@@ -66,6 +76,8 @@ class Video {
       'duration': duration,
       'order': order,
       'createdAt': createdAt?.toIso8601String(),
+      'isFree': isFree,
+      'isLocked': isLocked,
     };
   }
   String get formattedDuration {

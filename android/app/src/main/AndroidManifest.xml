@@ -70,4 +70,12 @@
             android:name="flutterEmbedding"
             android:value="2" />
     </application>
+
+    <!-- Required on Android 11+ for url_launcher to open WhatsApp / browser links -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+    </queries>
 </manifest>

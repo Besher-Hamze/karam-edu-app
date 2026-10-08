@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import '../../../../data/models/course.dart';
+import '../../../global_widgets/network_cover_image.dart';
 import '../../../theme/color_theme.dart';
 
 class CourseCard extends StatelessWidget {
   final Course course;
   final VoidCallback onTap;
-  final VoidCallback? onLockedTap;
+  final VoidCallback? onUnlockTap;
   final bool isEnrolled;
   final bool isAvailable;
 
@@ -13,7 +14,7 @@ class CourseCard extends StatelessWidget {
     Key? key,
     required this.course,
     required this.onTap,
-    this.onLockedTap,
+    this.onUnlockTap,
     this.isEnrolled = false,
     this.isAvailable = true,
   }) : super(key: key);
@@ -28,7 +29,7 @@ class CourseCard extends StatelessWidget {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: isAvailable ? onTap : (onLockedTap ?? onTap),
+          onTap: onTap,
           borderRadius: BorderRadius.circular(12),
           child: Container(
             decoration: BoxDecoration(
@@ -47,9 +48,6 @@ class CourseCard extends StatelessWidget {
                 children: [
                   // Main content
                   _buildMainContent(context, theme, isDarkMode),
-                  
-                  // Lock overlay
-                  if (!isAvailable) _buildLockOverlay(),
                   
                   // Enrolled badge
                   if (isEnrolled && isAvailable) _buildEnrolledBadge(),
@@ -85,6 +83,11 @@ class CourseCard extends StatelessWidget {
           
           // Course metadata
           _buildMetadata(context, isDarkMode),
+
+          if (!isAvailable) ...[
+            SizedBox(height: 16),
+            _buildLockedStrip(),
+          ],
           
           // Progress section (only for enrolled courses)
           if (isEnrolled && isAvailable) ...[
@@ -99,18 +102,23 @@ class CourseCard extends StatelessWidget {
   Widget _buildHeader(BuildContext context, bool isDarkMode) {
     return Row(
       children: [
-        // Icon container
-        Container(
-          width: 48,
-          height: 48,
-          decoration: BoxDecoration(
-            color: _getCourseColor(),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Icon(
-            _getCourseIcon(),
-            color: Colors.white,
-            size: 24,
+        ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: SizedBox(
+            width: 64,
+            height: 64,
+            child: NetworkCoverImage(
+              url: course.coverSmallUrl,
+              cacheKey: course.coverSmall,
+              fallback: Container(
+                color: _getCourseColor(),
+                child: Icon(
+                  _getCourseIcon(),
+                  color: Colors.white,
+                  size: 28,
+                ),
+              ),
+            ),
           ),
         ),
         
@@ -319,47 +327,47 @@ class CourseCard extends StatelessWidget {
     );
   }
 
-  Widget _buildLockOverlay() {
-    return Positioned.fill(
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          color: Colors.black.withOpacity(0.7),
-        ),
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.lock_rounded,
-                color: Colors.white,
-                size: 32,
-              ),
-              SizedBox(height: 12),
-              Text(
-                'الكورس غير متاح',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
+  Widget _buildLockedStrip() {
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.orange.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.orange.withOpacity(0.25)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.lock_rounded, color: Colors.orange[700], size: 20),
+          SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'الكورس مقفل',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.orange[800]),
                 ),
-              ),
-              SizedBox(height: 4),
-              Padding(
-                padding: EdgeInsets.symmetric(horizontal: 32),
-                child: Text(
-                  'لا يمكنك الوصول إلى هذا الكورس حالياً',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.8),
-                    fontSize: 12,
-                    height: 1.4,
-                  ),
-                  textAlign: TextAlign.center,
+                SizedBox(height: 2),
+                Text(
+                  'أول محاضرة مجانية، فعّل الكورس لمشاهدة الباقي',
+                  style: TextStyle(fontSize: 12, color: Colors.grey[700]),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
+          if (onUnlockTap != null)
+            TextButton(
+              onPressed: onUnlockTap,
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.white,
+                backgroundColor: ColorTheme.primary,
+                padding: EdgeInsets.symmetric(horizontal: 14),
+                minimumSize: Size(0, 34),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              child: Text('تفعيل', style: TextStyle(fontWeight: FontWeight.w600)),
+            ),
+        ],
       ),
     );
   }

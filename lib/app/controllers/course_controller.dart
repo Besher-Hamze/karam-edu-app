@@ -82,6 +82,21 @@ class CourseController extends GetxController {
     }
   }
 
+  /// The student hasn't unlocked this course (server marks its content as locked).
+  bool get isCourseLocked =>
+      courseVideos.any((video) => video.isLocked) || courseFiles.any((file) => file.isLocked);
+
+  Future<void> refreshCourse() async {
+    final String? courseId = Get.parameters['courseId'];
+    if (courseId == null) return;
+    await Future.wait([
+      fetchCourseDetails(courseId),
+      fetchCourseVideos(courseId),
+      fetchCourseFiles(courseId),
+    ]);
+    await reloadWatchedVideos();
+  }
+
   // Check if a video is watched
   bool isVideoWatched(String videoId) {
     return watchedVideos[videoId] ?? false;
