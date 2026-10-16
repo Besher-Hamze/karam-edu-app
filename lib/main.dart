@@ -141,7 +141,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     return GetMaterialApp(
-      title: 'منصة التعلم',
+      title: 'Prime Course',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
       locale: const Locale('ar', 'SA'),
@@ -196,7 +196,7 @@ class CompromisedDeviceApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GetMaterialApp(
-      title: 'منصة التعلم',
+      title: 'Prime Course',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
       locale: const Locale('ar', 'SA'),

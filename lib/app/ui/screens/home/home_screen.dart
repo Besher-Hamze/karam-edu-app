@@ -16,7 +16,7 @@ class HomeScreen extends GetView<HomeController> {
         elevation: 0,
         backgroundColor: ColorTheme.primary,
         title: Text(
-          'منصة التعلم',
+          'Prime Course',
           style: TextStyle(
             color: Colors.white,
             fontWeight: FontWeight.bold,

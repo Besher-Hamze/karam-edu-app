@@ -1,21 +1,21 @@
 import 'package:flutter/material.dart';
 
 class ColorTheme {
-  // Primary colors based on logo
-  static const Color primary = Color(0xFF00B0FF); // Bright blue from the "e" in logo
-  static const Color primaryDark = Color(0xFF0091EA); // Darker shade of logo blue
-  static const Color primaryLight = Color(0xFFE1F5FE); // Light blue for subtle highlights
+  // Primary colors based on Prime Course logo
+  static const Color primary = Color(0xFF1E5BFF);
+  static const Color primaryDark = Color(0xFF0B3D91);
+  static const Color primaryLight = Color(0xFFE8F0FF);
 
   // Secondary colors complementing the logo
-  static const Color secondary = Color(0xFF001F33); // Dark navy from graduation cap
-  static const Color secondaryLight = Color(0xFF37474F); // Lighter version of cap color
+  static const Color secondary = Color(0xFF0B1B3A);
+  static const Color secondaryLight = Color(0xFF37474F);
 
   // Interface colors
   static const Color background = Color(0xFFF5F5F5); // Soft white background
   static const Color card = Colors.white;
   static const Color text = Color(0xFF333333); // Slightly softer than pure black
   static const Color textSecondary = Color(0xFF666666);
-  static const Color accent = Color(0xFF00B0FF); // Using logo blue as accent
+  static const Color accent = Color(0xFFFF8A00);
 
   // Semantic colors for e-learning
   static const Color success = Color(0xFF4CAF50); // Green for positive feedback

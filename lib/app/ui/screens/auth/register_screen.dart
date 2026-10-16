@@ -32,10 +32,10 @@ class RegisterScreen extends StatelessWidget {
                     AnimatedContainer(
                       duration: Duration(milliseconds: 800),
                       curve: Curves.easeInOut,
-                      padding: EdgeInsets.all(16),
+                      padding: EdgeInsets.all(12),
                       decoration: BoxDecoration(
                         color: Colors.white,
-                        shape: BoxShape.circle,
+                        borderRadius: BorderRadius.circular(24),
                         boxShadow: [
                           BoxShadow(
                             color: Colors.black.withOpacity(0.1),
@@ -46,8 +46,8 @@ class RegisterScreen extends StatelessWidget {
                       ),
                       child: Image.asset(
                         'assets/images/logo_2.png',
-                        width: 80,
-                        height: 80,
+                        width: 120,
+                        height: 120,
                       ),
                     ),
                     SizedBox(height: 30),

@@ -51,10 +51,10 @@ class SplashScreen extends StatelessWidget {
                       return Transform.scale(
                         scale: value,
                         child: Container(
-                          padding: EdgeInsets.all(24),
+                          padding: EdgeInsets.all(16),
                           decoration: BoxDecoration(
                             color: Colors.white,
-                            shape: BoxShape.circle,
+                            borderRadius: BorderRadius.circular(28),
                             boxShadow: [
                               BoxShadow(
                                 color: Colors.black.withOpacity(0.15),
@@ -67,8 +67,8 @@ class SplashScreen extends StatelessWidget {
                             tag: 'app_logo',
                             child: Image.asset(
                               'assets/images/logo_2.png',
-                              width: size.width * 0.25,
-                              height: size.width * 0.25,
+                              width: size.width * 0.42,
+                              height: size.width * 0.42,
                             ),
                           ),
                         ),
@@ -86,7 +86,7 @@ class SplashScreen extends StatelessWidget {
                       return Opacity(
                         opacity: value,
                         child: Text(
-                          'منصة التعلم',
+                          'Prime Course',
                           style: textTheme.displaySmall?.copyWith(
                             color: Colors.white,
                             fontWeight: FontWeight.bold,
