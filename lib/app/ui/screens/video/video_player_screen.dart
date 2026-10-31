@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:better_player_plus/better_player_plus.dart';
 import '../../../controllers/video_controller.dart';
+import '../../../services/storage_service.dart';
 import '../../theme/color_theme.dart';
 
 class VideoPlayerScreen extends StatefulWidget {
@@ -122,39 +123,38 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   }
 
   Widget _buildVideoPlayer(BuildContext context) {
-    return Obx(() =>
-        Stack(
-          fit: StackFit.expand,
-          children: [
-            InteractiveViewer(
-              maxScale: 4.0,
-              minScale: 0.5,
-              child: SizedBox.expand(
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: controller.toggleControlsVisibility,
-                      child: Center(
-                        child: AspectRatio(
-                          aspectRatio: controller.betterPlayerController.value!
-                              .videoPlayerController!.value.aspectRatio,
-                          child: BetterPlayer(
-                            controller: controller.betterPlayerController.value!,
-                          ),
+    return Obx(() {
+      final player = controller.betterPlayerController.value;
+      if (player == null) {
+        return _buildBufferingState();
+      }
+
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          InteractiveViewer(
+            maxScale: 4.0,
+            minScale: 0.5,
+            child: GestureDetector(
+              onTap: controller.toggleControlsVisibility,
+              child: Stack(
+                children: [
+                  Center(
+                    child: BetterPlayer(controller: player),
+                  ),
+                  AnimatedOpacity(
+                    opacity: controller.controlsVisible.value ? 1.0 : 0.0,
+                    duration: const Duration(milliseconds: 300),
+                    child: IgnorePointer(
+                      ignoring: !controller.controlsVisible.value,
+                      child: Container(
+                        color: Colors.black.withOpacity(
+                          Get.isRegistered<StorageService>()
+                              ? Get.find<StorageService>().getVideoOverlayOpacity()
+                              : 0.4,
                         ),
-                      ),
-                    ),
-                    AnimatedOpacity(
-                      opacity: controller.controlsVisible.value ? 1.0 : 0.0,
-                      duration: const Duration(milliseconds: 300),
-                      child: IgnorePointer(
-                        ignoring: !controller.controlsVisible.value,
-                        child: Container(
-                          color: Colors.black.withOpacity(0.4),
-                          child: Stack(
-                            children: [
+                        child: Stack(
+                          children: [
                         // Top right controls
                         Positioned(
                           top: 16,
@@ -327,17 +327,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                             ],
                           ),
                         ),
-                      ],
+                          ],
+                        ),
+                      ),
                     ),
                   ),
-                ),
-              ),
-                  ],
-                ),
+                ],
               ),
             ),
+          ),
 
-            PositionedDirectional(
+          PositionedDirectional(
               top: 0,
               start: 0,
               child: SafeArea(
@@ -360,17 +360,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
               ),
             ),
 
-              Obx(() => controller.isBuffering.value
-                  ? Center(
-                      child: CircularProgressIndicator(
-                        valueColor: AlwaysStoppedAnimation<Color>(ColorTheme.primary),
-                      ),
-                    )
-                  : const SizedBox.shrink(),
-              ),
-            ],
+          Obx(() => controller.isBuffering.value
+              ? Center(
+                  child: CircularProgressIndicator(
+                    valueColor:
+                        AlwaysStoppedAnimation<Color>(ColorTheme.primary),
+                  ),
+                )
+              : const SizedBox.shrink(),
           ),
-    );
+        ],
+      );
+    });
   }
 
   /// Isolated [Obx] so [videoProgress] updates repaint only this row — not [BetterPlayer] / [InteractiveViewer].

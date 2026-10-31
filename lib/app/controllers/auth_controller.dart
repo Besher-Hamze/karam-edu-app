@@ -3,6 +3,7 @@ import 'package:get/get.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import '../data/repositories/auth_repository.dart';
 import '../services/storage_service.dart';
+import '../services/notification_service.dart';
 import '../ui/global_widgets/snackbar.dart';
 
 class AuthController extends GetxController {
@@ -73,6 +74,11 @@ class AuthController extends GetxController {
 
       await _storageService.setToken(result['accessToken']);
       await _storageService.setStudentProfile(result['student'].toJson());
+      if (Get.isRegistered<NotificationService>()) {
+        final notifications = Get.find<NotificationService>();
+        await notifications.syncAfterLoginOrOpen();
+        await notifications.refreshAppSettings();
+      }
       Get.offAllNamed('/home');
     } catch (e) {
       final context = Get.context;
@@ -118,6 +124,11 @@ class AuthController extends GetxController {
 
       await _storageService.setToken(result['accessToken']);
       await _storageService.setStudentProfile(result['student'].toJson());
+      if (Get.isRegistered<NotificationService>()) {
+        final notifications = Get.find<NotificationService>();
+        await notifications.syncAfterLoginOrOpen();
+        await notifications.refreshAppSettings();
+      }
 
       final context = Get.context;
       if (context != null) {

@@ -241,4 +241,30 @@ class StorageService extends GetxService {
   Future<void> removeHttpCache(String key) async {
     await _box.remove('http_cache_$key');
   }
+
+  // FCM
+  String? getFcmRegisteredToken() => _box.read('fcm_registered_token');
+
+  Future<void> setFcmRegisteredToken(String token) async {
+    await _box.write('fcm_registered_token', token);
+  }
+
+  bool isFcmTopicSubscribed(String topic) {
+    return _box.read('fcm_topic_$topic') == true;
+  }
+
+  Future<void> setFcmTopicSubscribed(String topic, bool value) async {
+    await _box.write('fcm_topic_$topic', value);
+  }
+
+  /// Black overlay on video controls (0–1). Default 0.4
+  double getVideoOverlayOpacity() {
+    final v = _box.read('video_overlay_opacity');
+    if (v is num) return v.toDouble().clamp(0.0, 1.0);
+    return 0.4;
+  }
+
+  Future<void> setVideoOverlayOpacity(double opacity) async {
+    await _box.write('video_overlay_opacity', opacity.clamp(0.0, 1.0));
+  }
 }

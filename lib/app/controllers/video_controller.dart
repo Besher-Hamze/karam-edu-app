@@ -39,6 +39,7 @@ class VideoController extends GetxController {
   RxDouble playbackSpeed = 1.0.obs;
   String? _currentLocalFilePath;
   StreamSubscription? _playerEventSubscription;
+  double? _lastSyncedAspectRatio;
 
   @override
   void onInit() {
@@ -393,6 +394,11 @@ class VideoController extends GetxController {
         ar = 16 / 9;
       }
     }
+    if (_lastSyncedAspectRatio != null &&
+        (_lastSyncedAspectRatio! - ar).abs() < 0.001) {
+      return;
+    }
+    _lastSyncedAspectRatio = ar;
     ctrl.setOverriddenAspectRatio(ar);
   }
 
@@ -404,6 +410,7 @@ class VideoController extends GetxController {
       _playerEventSubscription = null;
       betterPlayerController.value!.dispose();
       betterPlayerController.value = null;
+      _lastSyncedAspectRatio = null;
     }
 
     try {
@@ -654,6 +661,11 @@ class VideoController extends GetxController {
 
       isPlaying.value = videoController.value.isPlaying;
       isBuffering.value = videoController.value.isBuffering;
+
+      if (videoController.value.initialized &&
+          videoController.value.size != null) {
+        _syncPlayerAspectRatioFromVideo();
+      }
 
       if (videoController.value.hasError && !hasTriedOnlineFallback.value) {
         _handlePlaybackError();

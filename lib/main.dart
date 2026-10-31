@@ -10,6 +10,7 @@ import 'app/routes/app_pages.dart';
 import 'app/ui/theme/app_theme.dart';
 import 'app/services/storage_service.dart';
 import 'app/services/network_service.dart';
+import 'app/services/notification_service.dart';
 import 'app/controllers/video_download_manager.dart';
 import 'app/data/providers/video_provider.dart';
 import 'app/data/repositories/video_repository.dart';
@@ -89,12 +90,13 @@ void main() async {
 Future<void> initServices() async {
   await Get.putAsync(() => StorageService().init());
   await Get.putAsync(() => NetworkService().init());
-  
+  await Get.putAsync(() => NotificationService().init());
+
   // Register VideoProvider and VideoRepository permanently so VideoDownloadManager
   // can be initialized early for lifecycle handling
   Get.put(VideoProvider(), permanent: true);
   Get.put(VideoRepository(videoProvider: Get.find<VideoProvider>()), permanent: true);
-  
+
   // Register VideoDownloadManager as a permanent service so it's always available
   // for lifecycle handling even when course screen is not open
   Get.put(VideoDownloadManager(), permanent: true);
