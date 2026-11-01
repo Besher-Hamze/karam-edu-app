@@ -145,13 +145,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                 fit: StackFit.expand,
                 children: [
                   // Kept outside any Obx so control/overlay changes never rebuild the video surface.
-                  Video(
-                    controller: controller.videoOutput,
-                    controls: NoVideoControls,
-                    fit: BoxFit.contain,
-                    fill: Colors.black,
-                    wakelock: false,
-                  ),
+                  Obx(() {
+                    final output = controller.videoOutput.value;
+                    if (output == null) return const SizedBox.shrink();
+                    return Video(
+                      key: ObjectKey(output),
+                      controller: output,
+                      controls: NoVideoControls,
+                      fit: BoxFit.contain,
+                      fill: Colors.black,
+                      wakelock: false,
+                    );
+                  }),
                   Obx(() => AnimatedOpacity(
                     opacity: controller.controlsVisible.value ? 1.0 : 0.0,
                     duration: const Duration(milliseconds: 300),

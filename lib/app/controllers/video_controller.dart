@@ -22,23 +22,17 @@ class VideoController extends GetxController {
   VideoController({required VideoRepository videoRepository})
       : _videoRepository = videoRepository;
 
-  /// One mpv (libmpv/FFmpeg) instance for the whole screen. Switching sources
-  /// (offline -> online fallback) re-opens media on it instead of recreating it.
-  final Player player = Player(
-    configuration: const PlayerConfiguration(
-      bufferSize: 64 * 1024 * 1024,
-      logLevel: MPVLogLevel.warn,
-    ),
-  );
+  /// Videos whose picture could not be shown through the direct hardware path
+  /// this session; they open straight in compatibility mode next time.
+  static final Set<String> _compatibilityVideoIds = {};
 
-  /// Hardware decoding is tried first (`hwdec=auto-safe`); mpv falls back to
-  /// software decoding by itself when the device decoder rejects the stream.
-  late final mkv.VideoController videoOutput = mkv.VideoController(
-    player,
-    configuration: const mkv.VideoControllerConfiguration(
-      enableHardwareAcceleration: true,
-    ),
-  );
+  /// mpv (libmpv/FFmpeg) instance. Switching sources (offline -> online
+  /// fallback) re-opens media on it; it is only recreated to change the
+  /// video output path (see [_switchToCompatibilityMode]).
+  late Player player;
+
+  /// Replaced together with [player], so the screen rebuilds its [mkv.Video].
+  final Rxn<mkv.VideoController> videoOutput = Rxn<mkv.VideoController>();
 
   Rx<Video?> currentVideo = Rx<Video?>(null);
   RxBool isVideoInitialized = false.obs;
@@ -57,16 +51,19 @@ class VideoController extends GetxController {
   RxDouble playbackSpeed = 1.0.obs;
   final List<StreamSubscription> _playerSubscriptions = [];
   AppLifecycleListener? _lifecycleListener;
-  late final Future<void> _playerReady;
+  late Future<void> _playerReady;
+  bool _compatibilityMode = false;
   bool _softwareDecodingForced = false;
+  bool _switchingOutput = false;
+  String? _currentSource;
 
   @override
   void onInit() {
     super.onInit();
-    _playerReady = _configurePlayer();
-    _listenToPlayer();
 
     final String? videoId = Get.parameters['videoId'];
+    _createPlayer(
+        compatibilityMode: _compatibilityVideoIds.contains(videoId));
     if (videoId != null) {
       loadVideo(videoId);
     }
@@ -86,13 +83,44 @@ class VideoController extends GetxController {
     );
   }
 
+  void _createPlayer({required bool compatibilityMode}) {
+    _compatibilityMode = compatibilityMode;
+    _softwareDecodingForced = false;
+
+    player = Player(
+      configuration: const PlayerConfiguration(
+        bufferSize: 64 * 1024 * 1024,
+        logLevel: MPVLogLevel.warn,
+      ),
+    );
+    videoOutput.value = mkv.VideoController(
+      player,
+      configuration: Platform.isAndroid && !compatibilityMode
+          // The hardware decoder renders straight into the surface, like
+          // ExoPlayer did: native colors/brightness, lowest CPU and battery use.
+          ? const mkv.VideoControllerConfiguration(
+              vo: 'mediacodec_embed',
+              hwdec: 'mediacodec',
+            )
+          // mpv renders the frames itself: plays anything, falling back to
+          // software decoding when the device decoder rejects the stream.
+          : const mkv.VideoControllerConfiguration(
+              enableHardwareAcceleration: true,
+            ),
+    );
+
+    _playerReady = _configurePlayer(player, videoOutput.value!);
+    _listenToPlayer();
+  }
+
   /// Network / decoding tuning applied to mpv before anything is opened.
-  Future<void> _configurePlayer() async {
+  Future<void> _configurePlayer(
+      Player player, mkv.VideoController output) async {
     final native = player.platform;
     if (native is! NativePlayer) return;
     try {
       // Make sure the video output is attached before setting properties.
-      await videoOutput.platform.future;
+      await output.platform.future;
       await native.setProperty('cache', 'yes');
       await native.setProperty('demuxer-max-back-bytes', '${32 * 1024 * 1024}');
       await native.setProperty('demuxer-readahead-secs', '60');
@@ -138,24 +166,71 @@ class VideoController extends GetxController {
     _checkVideoIsRendering(position);
   }
 
-  /// Safety net for "audio but no picture": if playback has advanced and the
-  /// decoder still hasn't produced a single video frame, force software
-  /// decoding for this player and re-seek so the picture comes back.
+  Future<void> _cancelPlayerSubscriptions() async {
+    for (final subscription in _playerSubscriptions) {
+      await subscription.cancel();
+    }
+    _playerSubscriptions.clear();
+  }
+
+  /// Safety net for "audio but no picture": if playback has advanced and no
+  /// video frame is being shown, first leave the direct hardware path for
+  /// mpv's own renderer, then force software decoding as a last resort.
   void _checkVideoIsRendering(Duration position) {
-    if (_softwareDecodingForced || !isVideoInitialized.value) return;
-    if (position < const Duration(seconds: 4)) return;
-    if (player.state.width != null && player.state.width! > 0) return;
+    if (_switchingOutput ||
+        _softwareDecodingForced ||
+        !isVideoInitialized.value) return;
+    if (position < const Duration(seconds: 3)) return;
 
     final hasVideoTrack = player.state.tracks.video
         .any((track) => track.id != 'auto' && track.id != 'no');
     if (!hasVideoTrack) return;
+
+    final videoShown = (player.state.width ?? 0) > 0 &&
+        player.state.track.video.id != 'no';
+    if (videoShown) return;
+
+    if (!_compatibilityMode) {
+      _switchToCompatibilityMode(position);
+      return;
+    }
 
     final native = player.platform;
     if (native is! NativePlayer) return;
 
     _softwareDecodingForced = true;
     print('⚠️ No video frames decoded, switching to software decoding');
-    native.setProperty('hwdec', 'no').then((_) => player.seek(position));
+    native
+        .setProperty('hwdec', 'no')
+        .then((_) => native.setProperty('vid', 'auto'))
+        .then((_) => player.seek(position));
+  }
+
+  Future<void> _switchToCompatibilityMode(Duration position) async {
+    final source = _currentSource;
+    if (source == null) return;
+
+    _switchingOutput = true;
+    print('⚠️ Hardware video path failed, switching to compatibility mode');
+    final videoId = currentVideo.value?.id;
+    if (videoId != null) _compatibilityVideoIds.add(videoId);
+
+    try {
+      final oldPlayer = player;
+      await oldPlayer.pause();
+      await _cancelPlayerSubscriptions();
+      _createPlayer(compatibilityMode: true);
+      // Let the screen swap to the new output before releasing the old one.
+      await WidgetsBinding.instance.endOfFrame;
+      await oldPlayer.dispose();
+
+      await initializeVideoPlayer(source,
+          isOffline: isOfflineMode.value, startAt: position);
+    } catch (e) {
+      print('Error switching to compatibility mode: $e');
+    } finally {
+      _switchingOutput = false;
+    }
   }
 
   void _setFullScreen(bool enabled) {
@@ -468,10 +543,11 @@ class VideoController extends GetxController {
   }
 
   Future<bool> initializeVideoPlayer(String videoPath,
-      {bool isOffline = false}) async {
+      {bool isOffline = false, Duration startAt = Duration.zero}) async {
     isVideoInitialized.value = false;
     isOfflineMode.value = isOffline;
     videoProgress.value = 0.0;
+    _currentSource = videoPath;
 
     try {
       await _playerReady;
@@ -481,6 +557,9 @@ class VideoController extends GetxController {
       final duration = await opened;
       print('✅ Video opened (${duration.inSeconds}s): $videoPath');
 
+      if (startAt > Duration.zero) {
+        await player.seek(startAt);
+      }
       await player.setRate(playbackSpeed.value);
       await player.play();
 
@@ -610,9 +689,7 @@ class VideoController extends GetxController {
   void onClose() {
     _cancelHideControlsTimer();
     _lifecycleListener?.dispose();
-    for (final subscription in _playerSubscriptions) {
-      subscription.cancel();
-    }
+    _cancelPlayerSubscriptions();
     player.dispose();
 
     _setFullScreen(false);
