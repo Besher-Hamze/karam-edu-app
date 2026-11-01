@@ -61,11 +61,6 @@ android {
             // minifyEnabled true
             // proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
-
-        debug {
-            // For easier debugging of permissions
-            applicationIdSuffix ".debug"
-        }
     }
 
     // Add this to handle Samsung-specific issues

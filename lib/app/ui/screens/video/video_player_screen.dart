@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
-import 'package:better_player_plus/better_player_plus.dart';
+import 'package:media_kit_video/media_kit_video.dart' show Video, NoVideoControls;
 import '../../../controllers/video_controller.dart';
 import '../../../services/storage_service.dart';
 import '../../theme/color_theme.dart';
@@ -13,6 +13,15 @@ class VideoPlayerScreen extends StatefulWidget {
 
 class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   VideoController get controller => Get.find<VideoController>();
+
+  /// Slider position while the user drags; we only seek on release.
+  final ValueNotifier<double?> _dragProgress = ValueNotifier<double?>(null);
+
+  @override
+  void dispose() {
+    _dragProgress.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -123,26 +132,27 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   }
 
   Widget _buildVideoPlayer(BuildContext context) {
-    return Obx(() {
-      final player = controller.betterPlayerController.value;
-      if (player == null) {
-        return _buildBufferingState();
-      }
-
-      return Stack(
+    return Stack(
         fit: StackFit.expand,
         children: [
           InteractiveViewer(
             maxScale: 4.0,
             minScale: 0.5,
             child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
               onTap: controller.toggleControlsVisibility,
               child: Stack(
+                fit: StackFit.expand,
                 children: [
-                  Center(
-                    child: BetterPlayer(controller: player),
+                  // Kept outside any Obx so control/overlay changes never rebuild the video surface.
+                  Video(
+                    controller: controller.videoOutput,
+                    controls: NoVideoControls,
+                    fit: BoxFit.contain,
+                    fill: Colors.black,
+                    wakelock: false,
                   ),
-                  AnimatedOpacity(
+                  Obx(() => AnimatedOpacity(
                     opacity: controller.controlsVisible.value ? 1.0 : 0.0,
                     duration: const Duration(milliseconds: 300),
                     child: IgnorePointer(
@@ -331,7 +341,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                         ),
                       ),
                     ),
-                  ),
+                  )),
                 ],
               ),
             ),
@@ -371,17 +381,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           ),
         ],
       );
-    });
   }
 
-  /// Isolated [Obx] so [videoProgress] updates repaint only this row — not [BetterPlayer] / [InteractiveViewer].
-  /// The outer [Obx] must not read [videoProgress], or full-tree rebuilds can prevent the slider from updating.
+  /// Isolated [Obx] so [videoProgress] updates repaint only this row — not [Video] / [InteractiveViewer].
   Widget _buildVideoProgressBar(BuildContext context) {
-    return Obx(() {
-      final vpc = controller.betterPlayerController.value?.videoPlayerController;
-      final duration = vpc?.value.duration ?? Duration.zero;
+    return ValueListenableBuilder<double?>(
+      valueListenable: _dragProgress,
+      builder: (context, dragProgress, _) => Obx(() {
+      final duration = controller.videoDuration.value;
 
-      final raw = controller.videoProgress.value;
+      final raw = dragProgress ?? controller.videoProgress.value;
       final progress = raw.isNaN || raw.isInfinite ? 0.0 : raw.clamp(0.0, 1.0);
 
       final position = duration.inMilliseconds > 0
@@ -410,8 +419,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
               ),
               child: Slider(
                 value: progress,
-                onChanged: (value) {
+                onChanged: (value) => _dragProgress.value = value,
+                onChangeEnd: (value) {
                   controller.seekToProgress(value);
+                  _dragProgress.value = null;
                 },
               ),
             ),
@@ -424,7 +435,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           SizedBox(width: rightPad),
         ],
       );
-    });
+    }),
+    );
   }
 
   Widget _buildSpeedButton(double speed) {

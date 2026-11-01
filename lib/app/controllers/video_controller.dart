@@ -6,7 +6,8 @@ import 'package:course_platform/app/data/repositories/video_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
-import 'package:better_player_plus/better_player_plus.dart';
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart' as mkv;
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../services/storage_service.dart';
@@ -21,14 +22,31 @@ class VideoController extends GetxController {
   VideoController({required VideoRepository videoRepository})
       : _videoRepository = videoRepository;
 
+  /// One mpv (libmpv/FFmpeg) instance for the whole screen. Switching sources
+  /// (offline -> online fallback) re-opens media on it instead of recreating it.
+  final Player player = Player(
+    configuration: const PlayerConfiguration(
+      bufferSize: 64 * 1024 * 1024,
+      logLevel: MPVLogLevel.warn,
+    ),
+  );
+
+  /// Hardware decoding is tried first (`hwdec=auto-safe`); mpv falls back to
+  /// software decoding by itself when the device decoder rejects the stream.
+  late final mkv.VideoController videoOutput = mkv.VideoController(
+    player,
+    configuration: const mkv.VideoControllerConfiguration(
+      enableHardwareAcceleration: true,
+    ),
+  );
+
   Rx<Video?> currentVideo = Rx<Video?>(null);
-  Rx<BetterPlayerController?> betterPlayerController =
-      Rx<BetterPlayerController?>(null);
   RxBool isVideoInitialized = false.obs;
   RxBool isPlaying = false.obs;
   RxBool isLoading = true.obs;
   RxBool isBuffering = false.obs;
   RxDouble videoProgress = 0.0.obs;
+  Rx<Duration> videoDuration = Duration.zero.obs;
   RxBool controlsVisible = true.obs;
   RxBool isOfflineMode = false.obs;
   final StorageService _storageService = Get.find<StorageService>();
@@ -37,13 +55,17 @@ class VideoController extends GetxController {
   RxBool hasTriedOnlineFallback = false.obs;
 
   RxDouble playbackSpeed = 1.0.obs;
-  String? _currentLocalFilePath;
-  StreamSubscription? _playerEventSubscription;
-  double? _lastSyncedAspectRatio;
+  final List<StreamSubscription> _playerSubscriptions = [];
+  AppLifecycleListener? _lifecycleListener;
+  late final Future<void> _playerReady;
+  bool _softwareDecodingForced = false;
 
   @override
   void onInit() {
     super.onInit();
+    _playerReady = _configurePlayer();
+    _listenToPlayer();
+
     final String? videoId = Get.parameters['videoId'];
     if (videoId != null) {
       loadVideo(videoId);
@@ -51,17 +73,89 @@ class VideoController extends GetxController {
 
     _setFullScreen(true);
 
-    SystemChannels.lifecycle.setMessageHandler((message) {
-      if (message == 'AppLifecycleState.paused') {
+    // Unlike SystemChannels.lifecycle.setMessageHandler, this does not replace
+    // the framework's own lifecycle handling.
+    _lifecycleListener = AppLifecycleListener(
+      onPause: () {
         if (isPlaying.value) {
-          playPause();
+          player.pause();
           WakelockPlus.disable();
         }
-      } else if (message == 'AppLifecycleState.resumed') {
-        _setFullScreen(true);
-      }
-      return Future.value(message);
-    });
+      },
+      onResume: () => _setFullScreen(true),
+    );
+  }
+
+  /// Network / decoding tuning applied to mpv before anything is opened.
+  Future<void> _configurePlayer() async {
+    final native = player.platform;
+    if (native is! NativePlayer) return;
+    try {
+      // Make sure the video output is attached before setting properties.
+      await videoOutput.platform.future;
+      await native.setProperty('cache', 'yes');
+      await native.setProperty('demuxer-max-back-bytes', '${32 * 1024 * 1024}');
+      await native.setProperty('demuxer-readahead-secs', '60');
+      await native.setProperty('network-timeout', '20');
+      await native.setProperty('stream-lavf-o',
+          'reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_delay_max=5');
+      // Keeps A/V in sync on weak devices by dropping late frames.
+      await native.setProperty('framedrop', 'decoder+vo');
+    } catch (e) {
+      print('Error configuring player: $e');
+    }
+  }
+
+  void _listenToPlayer() {
+    _playerSubscriptions.addAll([
+      player.stream.playing.listen((playing) => isPlaying.value = playing),
+      player.stream.buffering.listen((buffering) => isBuffering.value = buffering),
+      player.stream.duration.listen((duration) => videoDuration.value = duration),
+      player.stream.position.listen(_onPosition),
+      player.stream.completed.listen((completed) {
+        if (!completed) return;
+        _markVideoAsWatched();
+        controlsVisible.value = true;
+        WakelockPlus.disable();
+      }),
+      player.stream.error.listen((error) => print('🎬 Player error: $error')),
+    ]);
+  }
+
+  void _onPosition(Duration position) {
+    final duration = player.state.duration;
+    if (duration.inMilliseconds <= 0) return;
+
+    final progress = position.inMilliseconds / duration.inMilliseconds;
+    videoProgress.value = progress;
+
+    if (!_videoMarkedAsWatched &&
+        (progress >= 0.95 ||
+            position.inMilliseconds >= duration.inMilliseconds - 1000)) {
+      _markVideoAsWatched();
+    }
+
+    _checkVideoIsRendering(position);
+  }
+
+  /// Safety net for "audio but no picture": if playback has advanced and the
+  /// decoder still hasn't produced a single video frame, force software
+  /// decoding for this player and re-seek so the picture comes back.
+  void _checkVideoIsRendering(Duration position) {
+    if (_softwareDecodingForced || !isVideoInitialized.value) return;
+    if (position < const Duration(seconds: 4)) return;
+    if (player.state.width != null && player.state.width! > 0) return;
+
+    final hasVideoTrack = player.state.tracks.video
+        .any((track) => track.id != 'auto' && track.id != 'no');
+    if (!hasVideoTrack) return;
+
+    final native = player.platform;
+    if (native is! NativePlayer) return;
+
+    _softwareDecodingForced = true;
+    print('⚠️ No video frames decoded, switching to software decoding');
+    native.setProperty('hwdec', 'no').then((_) => player.seek(position));
   }
 
   void _setFullScreen(bool enabled) {
@@ -176,49 +270,9 @@ class VideoController extends GetxController {
     }
   }
 
-  /// AVPlayer on iOS ignores files saved as .dat/.bin. Rename them to .mp4.
-  Future<String> _ensureIosPlayablePath(String videoId, String path) async {
-    final lower = path.toLowerCase();
-    if (lower.endsWith('.mp4') ||
-        lower.endsWith('.mov') ||
-        lower.endsWith('.m4v')) {
-      return path;
-    }
-
-    final file = File(path);
-    if (!await file.exists()) return path;
-
-    final slash = path.lastIndexOf('/');
-    final dot = path.lastIndexOf('.');
-    final mp4Path =
-        (dot > slash) ? '${path.substring(0, dot)}.mp4' : '$path.mp4';
-
-    try {
-      final dest = File(mp4Path);
-      if (await dest.exists()) {
-        await dest.delete();
-      }
-      try {
-        await file.rename(mp4Path);
-      } catch (_) {
-        await file.copy(mp4Path);
-        if (await file.exists()) {
-          await file.delete();
-        }
-      }
-      await _storageService.saveVideoPath(videoId, mp4Path);
-      print('♻️ Renamed iOS video to playable path: $mp4Path');
-      return mp4Path;
-    } catch (e) {
-      print('Failed to make iOS video playable: $e');
-      return path;
-    }
-  }
-
   void pauseForProtection() {
-    if (betterPlayerController.value != null && isPlaying.value) {
-      betterPlayerController.value!.pause();
-      isPlaying.value = false;
+    if (isPlaying.value) {
+      player.pause();
       WakelockPlus.disable();
     }
   }
@@ -228,7 +282,6 @@ class VideoController extends GetxController {
       isLoading.value = true;
       isVideoInitialized.value = false;
       hasTriedOnlineFallback.value = false;
-      _currentLocalFilePath = null;
       _videoMarkedAsWatched = false;
 
       playbackSpeed.value = 1.0;
@@ -247,9 +300,6 @@ class VideoController extends GetxController {
           ? await _downloadManager.getLocalVideoPath(videoId)
           : null;
       localFilePath = await _ensurePersistentLocalFile(videoId, localFilePath);
-      if (Platform.isIOS && localFilePath != null) {
-        localFilePath = await _ensureIosPlayablePath(videoId, localFilePath);
-      }
 
       final downloadStatus = _downloadManager.getDownloadStatusString(videoId);
       final isDownloading =
@@ -274,23 +324,24 @@ class VideoController extends GetxController {
 
       if (isValidLocalFile) {
         print("Loading offline video from: $localFilePath");
-        _currentLocalFilePath = localFilePath;
         final initSuccess =
             await initializeVideoPlayer(localFilePath, isOffline: true);
 
-        if (!initSuccess && hasInternet) {
-          print("Offline playback failed, switching to online mode");
+        if (!initSuccess) {
+          // FFmpeg could not even open the file, so it really is broken.
           await _handleCorruptedLocalFile(videoId, localFilePath);
+          if (!hasInternet) {
+            throw Exception(
+                'فشل تشغيل الفيديو المحلي ولا يوجد اتصال بالإنترنت');
+          }
 
+          print("Offline playback failed, switching to online mode");
+          hasTriedOnlineFallback.value = true;
           final String? streamUrl = await _videoRepository.getVideoUrl(videoId);
-          if (streamUrl != null) {
-            await initializeVideoPlayer(streamUrl, isOffline: false);
-          } else {
+          if (streamUrl == null) {
             throw Exception('فشل الحصول على رابط الفيديو من الخادم');
           }
-        } else if (!initSuccess && !hasInternet) {
-          await _handleCorruptedLocalFile(videoId, localFilePath);
-          throw Exception('فشل تشغيل الفيديو المحلي ولا يوجد اتصال بالإنترنت');
+          await initializeVideoPlayer(streamUrl, isOffline: false);
         }
       } else if (hasInternet) {
         final String? streamUrl = await _videoRepository.getVideoUrl(videoId);
@@ -378,265 +429,82 @@ class VideoController extends GetxController {
     }
   }
 
-  /// [BetterPlayer] uses [BetterPlayerConfiguration.aspectRatio] when set;
-  /// a fixed 16:9 forces portrait sources into a landscape box (wrong crop/fit).
-  void _syncPlayerAspectRatioFromVideo() {
-    final ctrl = betterPlayerController.value;
-    final vpc = ctrl?.videoPlayerController;
-    if (ctrl == null || vpc == null || !vpc.value.initialized) return;
+  /// Completes once mpv knows the media duration. Errors are not fatal right
+  /// away: mpv logs recoverable decoder errors (e.g. while falling back from
+  /// hardware to software decoding), so only fail if the media never loads.
+  Future<Duration> _waitUntilOpened() {
+    final completer = Completer<Duration>();
+    String? lastError;
+    Timer? errorGrace;
 
-    double ar = vpc.value.aspectRatio;
-    if (ar.isNaN || ar.isInfinite || ar <= 0) {
-      final size = vpc.value.size;
-      if (size != null && size.height > 0) {
-        ar = size.width / size.height;
-      } else {
-        ar = 16 / 9;
+    final subscriptions = <StreamSubscription>[
+      player.stream.duration.listen((duration) {
+        if (duration >= const Duration(seconds: 1) && !completer.isCompleted) {
+          completer.complete(duration);
+        }
+      }),
+      player.stream.error.listen((error) {
+        lastError = error;
+        errorGrace ??= Timer(const Duration(seconds: 4), () {
+          if (!completer.isCompleted) {
+            completer.completeError(Exception('Failed to open video: $lastError'));
+          }
+        });
+      }),
+    ];
+
+    return completer.future
+        .timeout(
+          const Duration(seconds: 25),
+          onTimeout: () => throw Exception(
+              'Video initialization timeout${lastError != null ? ': $lastError' : ''}'),
+        )
+        .whenComplete(() {
+      errorGrace?.cancel();
+      for (final subscription in subscriptions) {
+        subscription.cancel();
       }
-    }
-    if (_lastSyncedAspectRatio != null &&
-        (_lastSyncedAspectRatio! - ar).abs() < 0.001) {
-      return;
-    }
-    _lastSyncedAspectRatio = ar;
-    ctrl.setOverriddenAspectRatio(ar);
+    });
   }
 
   Future<bool> initializeVideoPlayer(String videoPath,
       {bool isOffline = false}) async {
-    // Dispose previous controller if exists
-    if (betterPlayerController.value != null) {
-      await _playerEventSubscription?.cancel();
-      _playerEventSubscription = null;
-      betterPlayerController.value!.dispose();
-      betterPlayerController.value = null;
-      _lastSyncedAspectRatio = null;
-    }
+    isVideoInitialized.value = false;
+    isOfflineMode.value = isOffline;
+    videoProgress.value = 0.0;
 
     try {
-      BetterPlayerDataSource dataSource;
+      await _playerReady;
 
-      if (isOffline) {
-        dataSource = BetterPlayerDataSource(
-          BetterPlayerDataSourceType.file,
-          videoPath,
-          cacheConfiguration: BetterPlayerCacheConfiguration(
-            useCache: false, // Already cached locally
-          ),
-        );
-        isOfflineMode.value = true;
-      } else {
-        dataSource = BetterPlayerDataSource(
-          BetterPlayerDataSourceType.network,
-          videoPath,
-          cacheConfiguration: BetterPlayerCacheConfiguration(
-            useCache: true,
-            maxCacheSize: 100 * 1024 * 1024, // 100 MB cache
-            maxCacheFileSize: 50 * 1024 * 1024, // 50 MB per file
-          ),
-          bufferingConfiguration: BetterPlayerBufferingConfiguration(
-            minBufferMs: 2000,
-            maxBufferMs: 10000,
-            bufferForPlaybackMs: 1000,
-            bufferForPlaybackAfterRebufferMs: 2000,
-          ),
-        );
-        isOfflineMode.value = false;
-      }
+      final opened = _waitUntilOpened();
+      await player.open(Media(videoPath), play: false);
+      final duration = await opened;
+      print('✅ Video opened (${duration.inSeconds}s): $videoPath');
 
-      final betterPlayerConfiguration = BetterPlayerConfiguration(
-        autoPlay: true,
-        looping: false,
-        fullScreenByDefault: false,
-        // Let the video define its own frame; do not hardcode 16:9 (breaks portrait).
-        aspectRatio: null,
-        fit: BoxFit.contain,
-        controlsConfiguration: BetterPlayerControlsConfiguration(
-          showControls: false, // We're using custom controls
-        ),
-        autoDetectFullscreenDeviceOrientation: true,
-        handleLifecycle: true,
-        // This helps with MTK devices - forces software decoding when needed
-        autoDetectFullscreenAspectRatio: true,
-      );
+      await player.setRate(playbackSpeed.value);
+      await player.play();
 
-      betterPlayerController.value = BetterPlayerController(
-        betterPlayerConfiguration,
-        betterPlayerDataSource: dataSource,
-      );
-
-      // Wait for initialization with timeout
-      await Future.delayed(Duration(milliseconds: 500));
-
-      bool initialized = false;
-      final initTimeout = DateTime.now().add(Duration(seconds: 15));
-
-      while (!initialized && DateTime.now().isBefore(initTimeout)) {
-        if (betterPlayerController.value?.isVideoInitialized() == true) {
-          initialized = true;
-          break;
-        }
-        await Future.delayed(Duration(milliseconds: 100));
-      }
-
-      if (!initialized) {
-        throw Exception('Video initialization timeout');
-      }
-
-      // Validate video duration
-      final duration =
-          betterPlayerController.value?.videoPlayerController?.value.duration;
-      if (duration == null ||
-          duration == Duration.zero ||
-          duration.inSeconds < 1) {
-        throw Exception('Video has invalid duration: $duration');
-      }
-
-      _syncPlayerAspectRatioFromVideo();
-
-      // Set up listener
-      _setupPlayerListener();
-
-      // Set playback speed
-      await betterPlayerController.value?.setSpeed(playbackSpeed.value);
-
-      isPlaying.value = true;
       isVideoInitialized.value = true;
-
       WakelockPlus.enable();
-
       return true;
     } catch (e) {
       print('Error initializing video player: $e');
-      print('Error details: ${e.toString()}');
       isVideoInitialized.value = false;
+      await player.stop();
 
-      if (isOffline &&
-          _currentLocalFilePath != null &&
-          currentVideo.value != null) {
-        final videoId = currentVideo.value!.id;
-
-        final downloadStatus =
-            _downloadManager.getDownloadStatusString(videoId);
-        final isDownloading =
-            downloadStatus == 'downloading' || downloadStatus == 'paused';
-
-        if (isDownloading) {
-          print(
-              '⚠️ Download in progress, file may not be complete yet. Trying online playback instead.');
-          if (await _hasInternetConnection() && !hasTriedOnlineFallback.value) {
-            hasTriedOnlineFallback.value = true;
-            print(
-                "Local playback failed (download in progress), trying online playback");
-            final String? streamUrl =
-                await _videoRepository.getVideoUrl(videoId);
-            if (streamUrl != null) {
-              return await initializeVideoPlayer(streamUrl, isOffline: false);
-            }
-          }
-          return false;
-        }
-
-        if (_currentLocalFilePath!.endsWith('.tmp')) {
-          print('⚠️ Trying to play temp file, switching to online playback');
-          if (await _hasInternetConnection() && !hasTriedOnlineFallback.value) {
-            hasTriedOnlineFallback.value = true;
-            final String? streamUrl =
-                await _videoRepository.getVideoUrl(videoId);
-            if (streamUrl != null) {
-              return await initializeVideoPlayer(streamUrl, isOffline: false);
-            }
-          }
-          return false;
-        }
-
-        print('⚠️ Local file failed to play, waiting and retrying once...');
-        await Future.delayed(Duration(milliseconds: 500));
-
-        try {
-          if (betterPlayerController.value != null) {
-            await _playerEventSubscription?.cancel();
-            betterPlayerController.value!.dispose();
-            betterPlayerController.value = null;
-          }
-
-          final retryDataSource = BetterPlayerDataSource(
-            BetterPlayerDataSourceType.file,
-            _currentLocalFilePath!,
+      // Local failures are handled by loadVideo (fallback to streaming).
+      if (!isOffline) {
+        final context = Get.context;
+        if (context != null) {
+          ShamraSnackBar.show(
+            context: context,
+            message: 'خطأ: فشل تشغيل الفيديو',
+            type: SnackBarType.error,
           );
-
-          final retryConfiguration = BetterPlayerConfiguration(
-            autoPlay: true,
-            looping: false,
-            aspectRatio: null,
-            fit: BoxFit.contain,
-            controlsConfiguration: BetterPlayerControlsConfiguration(
-              showControls: false,
-            ),
-            autoDetectFullscreenDeviceOrientation: true,
-            autoDetectFullscreenAspectRatio: true,
-            handleLifecycle: true,
-          );
-
-          betterPlayerController.value = BetterPlayerController(
-            retryConfiguration,
-            betterPlayerDataSource: retryDataSource,
-          );
-
-          await Future.delayed(Duration(milliseconds: 500));
-
-          if (betterPlayerController.value?.isVideoInitialized() == true) {
-            final duration = betterPlayerController
-                .value?.videoPlayerController?.value.duration;
-            if (duration != null &&
-                duration != Duration.zero &&
-                duration.inSeconds >= 1) {
-              _syncPlayerAspectRatioFromVideo();
-              _setupPlayerListener();
-              await betterPlayerController.value?.setSpeed(playbackSpeed.value);
-              isPlaying.value = true;
-              isVideoInitialized.value = true;
-              WakelockPlus.enable();
-              return true;
-            }
-          }
-        } catch (retryError) {
-          print('Retry also failed: $retryError');
         }
-
-        print('❌ File appears to be corrupted after retry, deleting...');
-        await _handleCorruptedLocalFile(videoId, _currentLocalFilePath!);
-
-        if (await _hasInternetConnection() && !hasTriedOnlineFallback.value) {
-          hasTriedOnlineFallback.value = true;
-          print("Local playback failed, trying online playback");
-          final String? streamUrl = await _videoRepository.getVideoUrl(videoId);
-          if (streamUrl != null) {
-            return await initializeVideoPlayer(streamUrl, isOffline: false);
-          }
-          return false;
-        }
-      }
-
-      final context = Get.context;
-      if (context != null) {
-        ShamraSnackBar.show(
-          context: context,
-          message: 'خطأ: فشل تشغيل الفيديو',
-          type: SnackBarType.error,
-        );
       }
       return false;
     }
-  }
-
-  void _setupPlayerListener() {
-    _playerEventSubscription?.cancel();
-
-    _playerEventSubscription =
-        betterPlayerController.value?.videoPlayerController?.addListener(() {
-      _videoPlayerListener();
-    }) as StreamSubscription?;
   }
 
   RxBool hasShownZoomHint = false.obs;
@@ -647,46 +515,6 @@ class VideoController extends GetxController {
 
   bool _videoMarkedAsWatched = false;
 
-  void _videoPlayerListener() {
-    if (betterPlayerController.value?.videoPlayerController != null) {
-      final videoController =
-          betterPlayerController.value!.videoPlayerController!;
-
-      final Duration position = videoController.value.position;
-      final Duration duration = videoController.value.duration ?? Duration.zero;
-
-      if (duration.inMilliseconds > 0) {
-        videoProgress.value = position.inMilliseconds / duration.inMilliseconds;
-      }
-
-      isPlaying.value = videoController.value.isPlaying;
-      isBuffering.value = videoController.value.isBuffering;
-
-      if (videoController.value.initialized &&
-          videoController.value.size != null) {
-        _syncPlayerAspectRatioFromVideo();
-      }
-
-      if (videoController.value.hasError && !hasTriedOnlineFallback.value) {
-        _handlePlaybackError();
-      }
-
-      if (duration.inMilliseconds > 0 && !_videoMarkedAsWatched) {
-        final progress = position.inMilliseconds / duration.inMilliseconds;
-        if (progress >= 0.95 ||
-            position.inMilliseconds >= duration.inMilliseconds - 1000) {
-          _markVideoAsWatched();
-        }
-      }
-
-      if (position.inMilliseconds >= duration.inMilliseconds &&
-          !isBuffering.value) {
-        controlsVisible.value = true;
-        WakelockPlus.disable();
-      }
-    }
-  }
-
   Future<void> _markVideoAsWatched() async {
     if (currentVideo.value != null && !_videoMarkedAsWatched) {
       _videoMarkedAsWatched = true;
@@ -695,123 +523,64 @@ class VideoController extends GetxController {
     }
   }
 
-  void _handlePlaybackError() async {
-    if (isOfflineMode.value &&
-        await _hasInternetConnection() &&
-        currentVideo.value != null) {
-      hasTriedOnlineFallback.value = true;
-      print("Playback error detected, switching to online mode");
-
-      if (_currentLocalFilePath != null) {
-        await _handleCorruptedLocalFile(
-            currentVideo.value!.id, _currentLocalFilePath!);
+  void playPause() {
+    if (!isVideoInitialized.value) return;
+    if (isPlaying.value) {
+      player.pause();
+      WakelockPlus.disable();
+    } else {
+      if (player.state.completed) {
+        player.seek(Duration.zero);
       }
+      player.play();
+      WakelockPlus.enable();
+      _startHideControlsTimer();
+    }
+  }
+
+  Future<void> setPlaybackSpeed(double speed) async {
+    try {
+      await player.setRate(speed);
+      playbackSpeed.value = speed;
 
       final context = Get.context;
       if (context != null) {
         ShamraSnackBar.show(
           context: context,
           message:
-              'جاري التبديل للمشاهدة عبر الإنترنت: حدث خطأ في تشغيل الفيديو المحلي',
+              'تم تغيير السرعة: سرعة التشغيل: ${speed == 1.0 ? "طبيعية" : "x" + speed.toStringAsFixed(1)}',
           type: SnackBarType.info,
-          duration: Duration(seconds: 2),
+          duration: Duration(seconds: 1),
         );
       }
 
-      final String? streamUrl =
-          await _videoRepository.getVideoUrl(currentVideo.value!.id);
-      if (streamUrl != null) {
-        await initializeVideoPlayer(streamUrl, isOffline: false);
-      }
-    } else if (isOfflineMode.value &&
-        currentVideo.value != null &&
-        _currentLocalFilePath != null) {
-      await _handleCorruptedLocalFile(
-          currentVideo.value!.id, _currentLocalFilePath!);
-    }
-  }
-
-  void playPause() {
-    if (betterPlayerController.value != null) {
-      if (isPlaying.value) {
-        betterPlayerController.value!.pause();
-        WakelockPlus.disable();
-      } else {
-        betterPlayerController.value!.play();
-        WakelockPlus.enable();
-        _startHideControlsTimer();
-      }
-    }
-  }
-
-  Future<void> setPlaybackSpeed(double speed) async {
-    if (betterPlayerController.value != null) {
-      try {
-        await betterPlayerController.value!.setSpeed(speed);
-        playbackSpeed.value = speed;
-
-        final context = Get.context;
-        if (context != null) {
-          ShamraSnackBar.show(
-            context: context,
-            message:
-                'تم تغيير السرعة: سرعة التشغيل: ${speed == 1.0 ? "طبيعية" : "x" + speed.toStringAsFixed(1)}',
-            type: SnackBarType.info,
-            duration: Duration(seconds: 1),
-          );
-        }
-
-        _startHideControlsTimer();
-      } catch (e) {
-        print('Error setting playback speed: $e');
-      }
+      _startHideControlsTimer();
+    } catch (e) {
+      print('Error setting playback speed: $e');
     }
   }
 
   void seekTo(Duration position) {
-    if (betterPlayerController.value != null) {
-      betterPlayerController.value!.seekTo(position);
-      _startHideControlsTimer();
-    }
+    if (!isVideoInitialized.value) return;
+    final duration = player.state.duration;
+    if (position < Duration.zero) position = Duration.zero;
+    if (duration > Duration.zero && position > duration) position = duration;
+    player.seek(position);
+    _startHideControlsTimer();
   }
 
   void seekToProgress(double progress) {
-    if (betterPlayerController.value?.videoPlayerController != null) {
-      final Duration duration =
-          betterPlayerController.value!.videoPlayerController!.value.duration ?? Duration.zero;
-      final int milliseconds = (progress * duration.inMilliseconds).round();
-      seekTo(Duration(milliseconds: milliseconds));
-    }
+    final duration = player.state.duration;
+    final int milliseconds = (progress * duration.inMilliseconds).round();
+    seekTo(Duration(milliseconds: milliseconds));
   }
 
   void skipForward() {
-    if (betterPlayerController.value?.videoPlayerController != null) {
-      final Duration currentPosition =
-          betterPlayerController.value!.videoPlayerController!.value.position;
-      final Duration duration =
-          betterPlayerController.value!.videoPlayerController!.value.duration ?? Duration.zero;
-      final Duration newPosition = currentPosition + Duration(seconds: 10);
-
-      if (newPosition < duration) {
-        seekTo(newPosition);
-      } else {
-        seekTo(duration);
-      }
-    }
+    seekTo(player.state.position + Duration(seconds: 10));
   }
 
   void skipBackward() {
-    if (betterPlayerController.value?.videoPlayerController != null) {
-      final Duration currentPosition =
-          betterPlayerController.value!.videoPlayerController!.value.position;
-      final Duration newPosition = currentPosition - Duration(seconds: 10);
-
-      if (newPosition > Duration.zero) {
-        seekTo(newPosition);
-      } else {
-        seekTo(Duration.zero);
-      }
-    }
+    seekTo(player.state.position - Duration(seconds: 10));
   }
 
   void toggleControlsVisibility() {
@@ -840,10 +609,11 @@ class VideoController extends GetxController {
   @override
   void onClose() {
     _cancelHideControlsTimer();
-    _playerEventSubscription?.cancel();
-    if (betterPlayerController.value != null) {
-      betterPlayerController.value!.dispose();
+    _lifecycleListener?.dispose();
+    for (final subscription in _playerSubscriptions) {
+      subscription.cancel();
     }
+    player.dispose();
 
     _setFullScreen(false);
     SystemChrome.setPreferredOrientations([

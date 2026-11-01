@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_windowmanager_plus/flutter_windowmanager_plus.dart';
 import 'package:get/get.dart';
 import 'package:get_storage/get_storage.dart';
+import 'package:media_kit/media_kit.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:safe_device/safe_device.dart';
 import 'dart:io';
@@ -18,6 +19,7 @@ import 'app/services/screen_guard_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  MediaKit.ensureInitialized();
   await GetStorage.init();
   await initServices();
   if (Platform.isAndroid) {
