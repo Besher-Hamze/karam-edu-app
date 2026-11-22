@@ -22,13 +22,8 @@ class VideoController extends GetxController {
   VideoController({required VideoRepository videoRepository})
       : _videoRepository = videoRepository;
 
-  /// Videos whose picture could not be shown through the direct hardware path
-  /// this session; they open straight in compatibility mode next time.
-  static final Set<String> _compatibilityVideoIds = {};
-
   /// mpv (libmpv/FFmpeg) instance. Switching sources (offline -> online
-  /// fallback) re-opens media on it; it is only recreated to change the
-  /// video output path (see [_switchToCompatibilityMode]).
+  /// fallback) re-opens media on it.
   late Player player;
 
   /// Replaced together with [player], so the screen rebuilds its [mkv.Video].
@@ -52,18 +47,14 @@ class VideoController extends GetxController {
   final List<StreamSubscription> _playerSubscriptions = [];
   AppLifecycleListener? _lifecycleListener;
   late Future<void> _playerReady;
-  bool _compatibilityMode = false;
   bool _softwareDecodingForced = false;
-  bool _switchingOutput = false;
-  String? _currentSource;
 
   @override
   void onInit() {
     super.onInit();
 
     final String? videoId = Get.parameters['videoId'];
-    _createPlayer(
-        compatibilityMode: _compatibilityVideoIds.contains(videoId));
+    _createPlayer();
     if (videoId != null) {
       loadVideo(videoId);
     }
@@ -83,8 +74,7 @@ class VideoController extends GetxController {
     );
   }
 
-  void _createPlayer({required bool compatibilityMode}) {
-    _compatibilityMode = compatibilityMode;
+  void _createPlayer() {
     _softwareDecodingForced = false;
 
     player = Player(
@@ -95,15 +85,12 @@ class VideoController extends GetxController {
     );
     videoOutput.value = mkv.VideoController(
       player,
-      configuration: Platform.isAndroid && !compatibilityMode
-          // The hardware decoder renders straight into the surface, like
-          // ExoPlayer did: native colors/brightness, lowest CPU and battery use.
-          ? const mkv.VideoControllerConfiguration(
-              vo: 'mediacodec_embed',
-              hwdec: 'mediacodec',
-            )
-          // mpv renders the frames itself: plays anything, falling back to
-          // software decoding when the device decoder rejects the stream.
+      // mpv renders the frames itself and falls back to software decoding
+      // when the device decoder rejects a stream. 'mediacodec_embed' is not
+      // used: on some Xiaomi devices it plays audio over a black surface
+      // while still reporting a valid video size, so it cannot be detected.
+      configuration: Platform.isAndroid
+          ? const mkv.VideoControllerConfiguration(hwdec: 'mediacodec-copy')
           : const mkv.VideoControllerConfiguration(
               enableHardwareAcceleration: true,
             ),
@@ -147,6 +134,9 @@ class VideoController extends GetxController {
         WakelockPlus.disable();
       }),
       player.stream.error.listen((error) => print('🎬 Player error: $error')),
+      // Only warn/error lines arrive (logLevel above); they show up in logcat.
+      player.stream.log.listen(
+          (log) => print('🎬 mpv [${log.prefix}] ${log.level}: ${log.text.trim()}')),
     ]);
   }
 
@@ -174,12 +164,9 @@ class VideoController extends GetxController {
   }
 
   /// Safety net for "audio but no picture": if playback has advanced and no
-  /// video frame is being shown, first leave the direct hardware path for
-  /// mpv's own renderer, then force software decoding as a last resort.
+  /// video frame is being shown, force software decoding as a last resort.
   void _checkVideoIsRendering(Duration position) {
-    if (_switchingOutput ||
-        _softwareDecodingForced ||
-        !isVideoInitialized.value) return;
+    if (_softwareDecodingForced || !isVideoInitialized.value) return;
     if (position < const Duration(seconds: 3)) return;
 
     final hasVideoTrack = player.state.tracks.video
@@ -189,11 +176,6 @@ class VideoController extends GetxController {
     final videoShown = (player.state.width ?? 0) > 0 &&
         player.state.track.video.id != 'no';
     if (videoShown) return;
-
-    if (!_compatibilityMode) {
-      _switchToCompatibilityMode(position);
-      return;
-    }
 
     final native = player.platform;
     if (native is! NativePlayer) return;
@@ -206,31 +188,29 @@ class VideoController extends GetxController {
         .then((_) => player.seek(position));
   }
 
-  Future<void> _switchToCompatibilityMode(Duration position) async {
-    final source = _currentSource;
-    if (source == null) return;
-
-    _switchingOutput = true;
-    print('⚠️ Hardware video path failed, switching to compatibility mode');
-    final videoId = currentVideo.value?.id;
-    if (videoId != null) _compatibilityVideoIds.add(videoId);
-
-    try {
-      final oldPlayer = player;
-      await oldPlayer.pause();
-      await _cancelPlayerSubscriptions();
-      _createPlayer(compatibilityMode: true);
-      // Let the screen swap to the new output before releasing the old one.
-      await WidgetsBinding.instance.endOfFrame;
-      await oldPlayer.dispose();
-
-      await initializeVideoPlayer(source,
-          isOffline: isOfflineMode.value, startAt: position);
-    } catch (e) {
-      print('Error switching to compatibility mode: $e');
-    } finally {
-      _switchingOutput = false;
+  /// Prints which decoder/output mpv actually ended up using, for diagnosing
+  /// device-specific "audio but no picture" reports from logcat.
+  Future<void> _logVideoPipeline() async {
+    final native = player.platform;
+    if (native is! NativePlayer || isClosed) return;
+    final values = <String>[];
+    for (final property in [
+      'current-vo',
+      'hwdec-current',
+      'video-codec',
+      'video-params/w',
+      'video-params/h',
+      'video-params/pixelformat',
+      'frame-drop-count',
+      'decoder-frame-drop-count',
+    ]) {
+      try {
+        values.add('$property=${await native.getProperty(property)}');
+      } catch (_) {
+        values.add('$property=?');
+      }
     }
+    print('🎬 pipeline: ${values.join(', ')}');
   }
 
   void _setFullScreen(bool enabled) {
@@ -547,7 +527,6 @@ class VideoController extends GetxController {
     isVideoInitialized.value = false;
     isOfflineMode.value = isOffline;
     videoProgress.value = 0.0;
-    _currentSource = videoPath;
 
     try {
       await _playerReady;
@@ -565,6 +544,7 @@ class VideoController extends GetxController {
 
       isVideoInitialized.value = true;
       WakelockPlus.enable();
+      Future.delayed(const Duration(seconds: 3), _logVideoPipeline);
       return true;
     } catch (e) {
       print('Error initializing video player: $e');

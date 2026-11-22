@@ -35,7 +35,8 @@ class NetworkService extends GetxService {
       },
     ));
 
-    _dio.interceptors.add(InterceptorsWrapper(
+    _dio.interceptors.add(
+      InterceptorsWrapper(
       onRequest: (options, handler) {
         final token = _storageService.getToken();
         if (token != null) {

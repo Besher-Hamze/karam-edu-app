@@ -28,7 +28,8 @@ class SemesterSelector extends StatelessWidget {
       {'name': 'تحكم', 'icon': Icons.settings_input_component_rounded},
       {'name': 'قدرة', 'icon': Icons.flash_on_rounded},
       {'name': 'قيادة', 'icon': Icons.account_tree_rounded},
-      {'name': 'الكترونية', 'icon': Icons.memory_rounded}
+      {'name': 'الكترونية', 'icon': Icons.memory_rounded},
+      {'name': 'هندسة مدنية', 'icon': Icons.apartment_rounded},
     ];
 
     return Padding(
